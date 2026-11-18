@@ -22,13 +22,18 @@ public struct Race: Sendable {
     }
 
     public mutating func step(_ rawInput: RiderInput) {
-        let input = bike.finished ? RiderInput() : rawInput
+        let crashed = if case .crashed = bike.phase { true } else { false }
+        let input = bike.finished || crashed ? RiderInput() : rawInput
         if !bike.finished { time += Race.dt }
         // Engine running: not stalled and not finished. Boost implies gas.
         let running = bike.stallRemaining == 0 && !bike.finished
         let boosting = running && input.boost
         let gas = running && (input.gas || input.boost)
-        if bike.phase == .grounded { stepGrounded(gas: gas, boost: boosting) }
+        switch bike.phase {
+        case .grounded: stepGrounded(gas: gas, boost: boosting)
+        case .airborne: stepAirborne(lean: input.lean)
+        case .crashed(let remaining): stepCrashed(remaining: remaining)
+        }
         updateHeatAndStall(boosting: boosting)
         if bike.x >= terrain.finishX { bike.finished = true }
     }
@@ -41,8 +46,66 @@ public struct Race: Sendable {
         speed = throttled(speed, gas: gas, boost: boost)
         speed -= tuning.gravity * tuning.slopeGravityFactor * sin(slope) * Race.dt
         speed = max(0, speed)
-        bike.x += speed * cos(slope) * Race.dt
+        // Ballistic candidate from the velocity along the current slope; take off if it clears the ground.
+        let dt = Race.dt
+        let vx = speed * cos(slope), vy = speed * sin(slope)
+        let x = bike.x + vx * dt
+        let y = bike.y + vy * dt - 0.5 * tuning.gravity * dt * dt
+        if y > terrain.height(at: x) + 1e-6 {
+            bike.x = x
+            bike.y = y
+            bike.vx = vx
+            bike.vy = vy - tuning.gravity * dt
+            bike.phase = .airborne
+            return
+        }
+        bike.x = x
         Race.snapToTerrain(&bike, terrain: terrain, speed: speed)
+    }
+
+    // MARK: Airborne and landing
+
+    /// Ballistic flight; lean rotates the bike (positive lean = nose down). Gas and boost do nothing here.
+    private mutating func stepAirborne(lean: Double) {
+        let dt = Race.dt
+        bike.x += bike.vx * dt
+        bike.y += bike.vy * dt - 0.5 * tuning.gravity * dt * dt
+        bike.vy -= tuning.gravity * dt
+        bike.angle -= min(max(lean, -1), 1) * tuning.leanRate * dt
+        if bike.y <= terrain.height(at: bike.x) { land() }
+    }
+
+    /// Grades the landing by how far the bike's angle is from the slope: clean keeps the
+    /// along-slope speed, sloppy loses some, anything worse crashes.
+    private mutating func land() {
+        let slope = terrain.slope(at: bike.x)
+        let d = abs((bike.angle - slope).remainder(dividingBy: 2 * .pi))
+        let s = max(0, bike.vx * cos(slope) + bike.vy * sin(slope))
+        if d <= tuning.cleanLandingAngle {
+            Race.snapToTerrain(&bike, terrain: terrain, speed: s)
+            bike.phase = .grounded
+        } else if d <= tuning.crashLandingAngle {
+            Race.snapToTerrain(&bike, terrain: terrain, speed: s * tuning.sloppyLandingSpeedFactor)
+            bike.phase = .grounded
+        } else {
+            bike.y = terrain.height(at: bike.x)
+            bike.vx = 0
+            bike.vy = 0
+            bike.phase = .crashed(remaining: tuning.crashDuration)
+        }
+    }
+
+    // MARK: Crashed
+
+    /// Position is fixed while the timer runs; on expiry the bike is back on the ground, stopped.
+    private mutating func stepCrashed(remaining: Double) {
+        let left = max(0, remaining - Race.dt)
+        if left > 0 {
+            bike.phase = .crashed(remaining: left)
+            return
+        }
+        Race.snapToTerrain(&bike, terrain: terrain)
+        bike.phase = .grounded
     }
 
     /// Accelerates toward the top speed under gas (boost raises both accel and top speed);
