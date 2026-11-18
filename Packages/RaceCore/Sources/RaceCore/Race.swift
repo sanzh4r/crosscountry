@@ -24,30 +24,56 @@ public struct Race: Sendable {
     public mutating func step(_ rawInput: RiderInput) {
         let input = bike.finished ? RiderInput() : rawInput
         if !bike.finished { time += Race.dt }
-        if bike.phase == .grounded { stepGrounded(input) }
+        // Engine running: not stalled and not finished. Boost implies gas.
+        let running = bike.stallRemaining == 0 && !bike.finished
+        let boosting = running && input.boost
+        let gas = running && (input.gas || input.boost)
+        if bike.phase == .grounded { stepGrounded(gas: gas, boost: boosting) }
+        updateHeatAndStall(boosting: boosting)
         if bike.x >= terrain.finishX { bike.finished = true }
     }
 
     // MARK: Grounded riding
 
-    private mutating func stepGrounded(_ input: RiderInput) {
+    private mutating func stepGrounded(gas: Bool, boost: Bool) {
         let slope = terrain.slope(at: bike.x)
         var speed = bike.speed
-        speed = throttled(speed, gas: input.gas)
+        speed = throttled(speed, gas: gas, boost: boost)
         speed -= tuning.gravity * tuning.slopeGravityFactor * sin(slope) * Race.dt
         speed = max(0, speed)
         bike.x += speed * cos(slope) * Race.dt
         Race.snapToTerrain(&bike, terrain: terrain, speed: speed)
     }
 
-    /// Accelerates toward the top speed under gas; otherwise coasts down.
-    private func throttled(_ speed: Double, gas: Bool) -> Double {
-        let top = tuning.normalTopSpeed
+    /// Accelerates toward the top speed under gas (boost raises both accel and top speed);
+    /// above the top speed, or without gas, the bike coasts down.
+    private func throttled(_ speed: Double, gas: Bool, boost: Bool) -> Double {
+        let top = boost ? tuning.boostTopSpeed : tuning.normalTopSpeed
+        let accel = boost ? tuning.boostAccel : tuning.gasAccel
         if gas {
-            if speed < top { return min(speed + tuning.gasAccel * Race.dt, top) }
+            if speed < top { return min(speed + accel * Race.dt, top) }
             return max(speed - tuning.coastDecel * Race.dt, top)
         }
         return max(speed - tuning.coastDecel * Race.dt, 0)
+    }
+
+    // MARK: Heat and stall
+
+    /// Runs every step in every phase. Boosting fills heat; reaching 1 stalls the engine
+    /// (timer starts counting down on the following step). Otherwise heat drains.
+    private mutating func updateHeatAndStall(boosting: Bool) {
+        if bike.stallRemaining > 0 {
+            bike.stallRemaining = max(0, bike.stallRemaining - Race.dt)
+            bike.heat = 0
+        } else if boosting {
+            bike.heat += Race.dt / tuning.heatFillTime
+            if bike.heat >= 1 {
+                bike.stallRemaining = tuning.stallDuration
+                bike.heat = 0
+            }
+        } else {
+            bike.heat = max(0, bike.heat - Race.dt / tuning.heatDrainTime)
+        }
     }
 
     /// Places the bike on the terrain at its x, aligned to the slope, moving at `speed` along it.
