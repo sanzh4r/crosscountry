@@ -46,12 +46,13 @@ public struct Race: Sendable {
         speed = throttled(speed, gas: gas, boost: boost)
         speed -= tuning.gravity * tuning.slopeGravityFactor * sin(slope) * Race.dt
         speed = max(0, speed)
-        // Ballistic candidate from the velocity along the current slope; take off if it clears the ground.
+        // Ballistic candidate from the velocity along the current slope; take off if it clears the ground
+        // and the bike is fast enough (a slow bike rolls over sharp crests instead of hopping off them).
         let dt = Race.dt
         let vx = speed * cos(slope), vy = speed * sin(slope)
         let x = bike.x + vx * dt
         let y = bike.y + vy * dt - 0.5 * tuning.gravity * dt * dt
-        if y > terrain.height(at: x) + 1e-6 {
+        if speed >= tuning.minTakeoffSpeed && y > terrain.height(at: x) + 1e-6 {
             bike.x = x
             bike.y = y
             bike.vx = vx

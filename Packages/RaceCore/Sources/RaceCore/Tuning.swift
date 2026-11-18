@@ -6,6 +6,7 @@ public struct Tuning: Codable, Equatable, Sendable {
     public var normalTopSpeed = 16.0
     public var boostTopSpeed = 24.0
     public var coastDecel = 3.0
+    public var minTakeoffSpeed = 4.0          // below this a grounded bike always follows the terrain
     public var leanRate = 2.5
     public var cleanLandingAngle = 0.26
     public var crashLandingAngle = 0.79

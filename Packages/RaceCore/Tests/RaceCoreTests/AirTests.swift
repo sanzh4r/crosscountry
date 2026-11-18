@@ -49,4 +49,19 @@ struct AirTests {
         for _ in 0..<30 { r.step(.init()) }; #expect(r.bike.finished); let t = r.time
         for _ in 0..<60 { r.step(.init(gas: true)) }; #expect(r.time == t)
     }
+    @Test func slowBikeFollowsRockRampLipWithoutCrashing() {      // ramp spans x 40…52, peak at 50.2
+        var b = BikeState(); b.x = 49.5
+        var r = Race(track: Track(lengthCells: 60, pieces: [.init(kind: .rockRamp, cell: 10)]), bike: b)
+        for _ in 0..<240 {
+            r.step(.init(gas: true))
+            if case .crashed = r.bike.phase { Issue.record("slow bike crashed at x = \(r.bike.x)") }
+            #expect(r.bike.y >= r.terrain.height(at: r.bike.x) - 1e-9)
+        }
+        #expect(r.bike.x > 52)
+    }
+    @Test func fastBikeStillJumpsRockRamp() {
+        var r = Race(track: Track(lengthCells: 60, pieces: [.init(kind: .rockRamp, cell: 10)])); var flew = false
+        for _ in 0..<600 { r.step(.init(gas: true)); if r.bike.phase == .airborne && r.bike.x > 50 { flew = true } }
+        #expect(flew); #expect(r.bike.finished || r.bike.x > 60)
+    }
 }
