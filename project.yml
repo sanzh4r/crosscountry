@@ -1,0 +1,41 @@
+name: DuneBikes
+options:
+  bundleIdPrefix: dev.placeholder
+  deploymentTarget:
+    iOS: "17.0"
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+packages:
+  RaceCore:
+    path: Packages/RaceCore
+targets:
+  DuneBikes:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: App/Sources
+      - path: App/Resources
+    dependencies:
+      - package: RaceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.placeholder.dunebikes
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"
+    info:
+      path: App/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarHidden: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
