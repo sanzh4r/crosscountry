@@ -14,6 +14,17 @@ public enum PieceKind: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// Peak height in metres; surface pieces (mud, boostPad) have none.
+    public var height: Double {
+        switch self {
+        case .smallHill: 1.5
+        case .bigHill: 3.5
+        case .rockRamp: 2.5
+        case .bumps: 0.5
+        case .mud, .boostPad: 0
+        }
+    }
+
     public var isTerrain: Bool {
         switch self {
         case .mud, .boostPad: false
