@@ -35,3 +35,13 @@ func invalidTrackThrows(pieces: [PlacedPiece], expected: TrackError) {
     let json = Data(#"{"lengthCells":40,"pieces":[{"kind":"mud","cell":8}]}"#.utf8)
     #expect(throws: TrackError.laneRequired(cell: 8)) { try Track.load(from: json) }
 }
+@Test func hugeCellFailsToLoadWithoutCrashing() {
+    let json = Data(#"{"lengthCells":40,"pieces":[{"kind":"smallHill","cell":9223372036854775807}]}"#.utf8)
+    #expect(throws: TrackError.outsideBuildZone(cell: Int.max)) { try Track.load(from: json) }
+}
+@Test func hugeLengthDoesNotCrash() throws {
+    try Track(lengthCells: Int.max, pieces: [.init(kind: .smallHill, cell: 6)]).validate()
+    #expect(throws: TrackError.outsideBuildZone(cell: Int.max - 1)) {
+        try Track(lengthCells: Int.max, pieces: [.init(kind: .smallHill, cell: Int.max - 1)]).validate()
+    }
+}

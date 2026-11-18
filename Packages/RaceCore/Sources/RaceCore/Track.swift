@@ -33,6 +33,7 @@ public struct PlacedPiece: Codable, Equatable, Sendable {
         self.lane = lane
     }
 
+    /// Only call on a piece already known to lie in the build zone; `cell + width` could overflow otherwise.
     var endCell: Int { cell + kind.widthCells }
 }
 
@@ -69,7 +70,7 @@ public struct Track: Codable, Equatable, Sendable {
 
         var previous: [PlacedPiece] = []
         for piece in ordered {
-            guard piece.cell >= buildStart, piece.endCell <= buildEnd else {
+            guard piece.cell >= buildStart, piece.cell <= buildEnd - piece.kind.widthCells else {
                 throw .outsideBuildZone(cell: piece.cell)
             }
             if piece.kind.isTerrain {
