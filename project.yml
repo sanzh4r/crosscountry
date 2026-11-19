@@ -1,6 +1,6 @@
 name: DuneBikes
 options:
-  bundleIdPrefix: dev.placeholder
+  bundleIdPrefix: com.dunebikes
   deploymentTarget:
     iOS: "17.0"
   developmentLanguage: en
@@ -22,7 +22,9 @@ targets:
       - package: RaceCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.placeholder.dunebikes
+        PRODUCT_BUNDLE_IDENTIFIER: com.dunebikes.prototype
+        DEVELOPMENT_TEAM: P9WGCWJLAQ
+        CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
     info:
