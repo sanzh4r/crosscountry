@@ -14,6 +14,14 @@ final class GameScene: SKScene {
     private static let bikeScreenFraction: (slow: CGFloat, fast: CGFloat) = (0.34, 0.2)
     /// Rate (1/s) at which the bike's place on screen follows its speed.
     private static let lookAheadEasing = 1.5
+    /// Screen shake: scene points per m/s of landing speed, the cap for a landing, the strength of
+    /// a crash, and the rate (1/s) at which it dies away.
+    private static let shakePerImpact: CGFloat = 0.3
+    private static let maxLandingShake: CGFloat = 4
+    private static let crashShake: CGFloat = 7
+    private static let shakeDecay = 9.0
+    /// Landings slower than this (m/s downward) raise no dust and no shake.
+    private static let minImpact = 3.0
     /// Rate (1/s) at which the camera closes the vertical gap to the bike.
     private static let cameraVerticalEasing = 4.0
     /// Frame gaps longer than this (the view was paused or the app was in the background) count as zero.
@@ -22,9 +30,14 @@ final class GameScene: SKScene {
     private var race: Race
     private var clock = FixedStepClock()
     private var lastUpdateTime: TimeInterval?
+    private var lastFrameGap = 0.0
 
     private let terrainNode: TerrainNode
     private let background = BackgroundNode()
+    private let effects = EffectsNode()
+    /// Current screen-shake strength in scene points; dies away quickly.
+    private var shake: CGFloat = 0
+    private var lastInput = RiderInput()
     private let bikeNode = BikeNode(pointsPerMetre: GameScene.pointsPerMetre)
     private let cameraNode = SKCameraNode()
     /// Camera child scaled so that one unit is one view point; holds the HUD and buttons.
@@ -37,6 +50,8 @@ final class GameScene: SKScene {
     /// Visible scene area (in scene points) for the current view; the whole scene until the view is known.
     private var visibleSize = GameScene.sceneSize
     private var bikeFraction = GameScene.bikeScreenFraction.slow
+    /// The camera's height before any shake is added.
+    private var cameraHeight: CGFloat = 0
 
     /// The current race tuning.
     var tuning: Tuning { race.tuning }
@@ -50,6 +65,8 @@ final class GameScene: SKScene {
 
         terrainNode.zPosition = 0
         bikeNode.zPosition = 1
+        effects.zPosition = 2
+        addChild(effects)
         overlay.zPosition = 10
         addChild(terrainNode)
         addChild(bikeNode)
@@ -71,6 +88,8 @@ final class GameScene: SKScene {
         race = Race(track: .prototype, tuning: tuning)
         clock = FixedStepClock()
         lastUpdateTime = nil
+        effects.clear()
+        shake = 0
         syncNodes(snapCamera: true, elapsed: 0)
     }
 
@@ -90,6 +109,7 @@ final class GameScene: SKScene {
         var elapsed = lastUpdateTime.map { currentTime - $0 } ?? 0
         if elapsed > GameScene.maxFrameGap { elapsed = 0 }
         lastUpdateTime = currentTime
+        lastFrameGap = elapsed
 
         input.showsRestartButton = race.bike.finished
         input.poll()
@@ -100,14 +120,32 @@ final class GameScene: SKScene {
         let steps = clock.advance(by: elapsed)
         #if DEBUG
         if let demo = demoInput {
-            for _ in 0..<steps { race.step(demo) }
+            let boosted = RiderInput(gas: true, boost: race.time < 2.2 || (race.time > 4 && race.time < 6.5), lean: demo.lean)
+            for _ in 0..<steps { step(boosted) }
             syncNodes(snapCamera: false, elapsed: Double(steps) * Race.dt)
             saveDueSnapshot()
             return
         }
         #endif
-        for _ in 0..<steps { race.step(input.current) }
+        for _ in 0..<steps { step(input.current) }
         syncNodes(snapCamera: false, elapsed: Double(steps) * Race.dt)
+    }
+
+    /// One simulation step, plus the dust and shake for a landing or crash it caused.
+    private func step(_ riderInput: RiderInput) {
+        let before = race.bike
+        race.step(riderInput)
+        lastInput = riderInput
+        let after = race.bike
+        guard before.phase == .airborne, after.phase != .airborne else { return }
+        var crashed = false
+        if case .crashed = after.phase { crashed = true }
+        let impact = -before.vy
+        guard crashed || impact > GameScene.minImpact else { return }
+        let m = GameScene.pointsPerMetre
+        effects.landing(at: CGPoint(x: after.x * m, y: after.y * m), impact: impact, crashed: crashed)
+        shake = max(shake, crashed ? GameScene.crashShake
+                                   : min(CGFloat(impact) * GameScene.shakePerImpact, GameScene.maxLandingShake))
     }
 
     #if DEBUG
@@ -126,9 +164,9 @@ final class GameScene: SKScene {
               let image = view.texture(from: self)?.cgImage() else { return }
         snapshotTimes.removeFirst()
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = folder.appendingPathComponent("snapshot-\(Int(due)).png")
+        let url = folder.appendingPathComponent("snapshot-\(Int((due * 10).rounded())).png")
         try? UIImage(cgImage: image).pngData()?.write(to: url)
-        print("snapshot", url.path)
+        print("snapshot", url.path, "fps", 1 / max(view.preferredFramesPerSecond == 0 ? 0.016 : lastFrameGap, 0.001))
         if snapshotTimes.isEmpty { exit(0) }
     }
     #endif
@@ -155,7 +193,7 @@ final class GameScene: SKScene {
 
     /// Moves the bike, camera and HUD to the race state. `elapsed` is simulated seconds since the last sync.
     private func syncNodes(snapCamera: Bool, elapsed: Double) {
-        bikeNode.update(with: race.bike)
+        bikeNode.update(with: race.bike, tuning: race.tuning, elapsed: elapsed)
         hud.update(with: race)
 
         let m = GameScene.pointsPerMetre
@@ -170,13 +208,27 @@ final class GameScene: SKScene {
         } else {
             bikeFraction += (targetFraction - bikeFraction) * (1 - exp(-GameScene.lookAheadEasing * elapsed))
             let blend = 1 - exp(-GameScene.cameraVerticalEasing * elapsed)
-            y = cameraNode.position.y + (targetY - cameraNode.position.y) * blend
+            y = cameraHeight + (targetY - cameraHeight) * blend
         }
         let offsetX = visibleSize.width * (0.5 - bikeFraction)
         let maxCameraX = terrainNode.drawnEndX * m - visibleSize.width / 2
         let x = min(race.bike.x * m + offsetX, maxCameraX)
-        cameraNode.position = CGPoint(x: x, y: y)
+        // The shake moves only what the camera shows of the world; the remembered height stays clean.
+        cameraHeight = y
+        shake *= CGFloat(exp(-GameScene.shakeDecay * elapsed))
+        let jolt = shake < 0.5 ? CGPoint.zero
+            : CGPoint(x: (CGFloat.random(in: -1...1) * shake).rounded(), y: (CGFloat.random(in: -1...1) * shake).rounded())
+        cameraNode.position = CGPoint(x: x + jolt.x, y: y + jolt.y)
         background.update(cameraX: x, rise: y - restY, visible: visibleSize)
+
+        let bike = race.bike
+        let angle = CGFloat(bike.angle)
+        let base = CGPoint(x: bike.x * m, y: bike.y * m)
+        let rear = CGPoint(x: base.x - 20 * cos(angle), y: base.y - 20 * sin(angle) + 1)
+        let exhaust = CGPoint(x: rear.x - 10 * cos(angle) - 13 * sin(angle), y: rear.y - 10 * sin(angle) + 13 * cos(angle))
+        effects.ride(bike: bike, rearWheel: rear, exhaust: exhaust,
+                     bikeVelocity: CGVector(dx: bike.vx * m, dy: bike.vy * m),
+                     boosting: lastInput.boost, elapsed: elapsed)
         terrainNode.show(minX: x - visibleSize.width / 2, maxX: x + visibleSize.width / 2)
     }
 

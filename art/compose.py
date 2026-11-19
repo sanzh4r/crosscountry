@@ -276,11 +276,18 @@ def assets():
     backdrop.convert("RGB").save(OUT / "backdrop.png")
     for n, (strip, _, _) in layers.items():
         strip.save(OUT / f"layer-{n}.png")
-    trimmed(load("probe-rider-64")).save(OUT / "bike.png")
+    # Ride loop: PixelLab animated the approved rider; every frame keeps one crop so they line up.
+    ride = [Image.open(f).convert("RGBA") for f in sorted((RAW / "ride").glob("ride-*.png"))]
+    boxes = [f.getbbox() for f in ride]
+    box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+    for i, f in enumerate(ride):
+        f.crop(box).save(OUT / f"bike-{i}.png")
+    (OUT / "bike.png").unlink(missing_ok=True)
     if (RAW / "gate.png").exists():
         snap(trimmed(load("gate")), palette).save(OUT / "gate.png")
     info = {
         "sand": tones, "rock": rock_tones(palette), "sky": backdrop.convert("RGB").getpixel((0, 0)),
+        "sun": max(palette, key=sum), "rideFrames": len(ride),
         "layers": {n: {"parallax": LAYERS[n][1], "baseAboveBottom": SCENE_H - LAYERS[n][3],
                        "floorRows": FLOOR_ROWS, "floor": floor_tones(n, palette, haze_rgb)[1]} for n in LAYERS},
     }

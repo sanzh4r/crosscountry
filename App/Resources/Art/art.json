@@ -58,6 +58,12 @@
   38,
   73
  ],
+ "sun": [
+  246,
+  232,
+  184
+ ],
+ "rideFrames": 5,
  "layers": {
   "mid": {
    "parallax": 0.12,
