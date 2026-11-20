@@ -64,6 +64,7 @@
   184
  ],
  "rideFrames": 5,
+ "standFrames": 4,
  "layers": {
   "mid": {
    "parallax": 0.12,

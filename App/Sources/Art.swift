@@ -17,6 +17,7 @@ struct ArtInfo: Decodable, Sendable {
     /// The brightest colour of the palette.
     let sun: [Int]
     let rideFrames: Int
+    let standFrames: Int
     let layers: [String: Layer]
 
     static let shared: ArtInfo = {

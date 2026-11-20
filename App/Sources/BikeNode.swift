@@ -15,18 +15,26 @@ final class BikeNode: SKNode {
     private static let tumbleTurns = 2.0
     private static let tumbleHop: CGFloat = 26
     private static let blinkRate = 9.0
+    /// Standing still: below this speed (m/s) the rider puts a foot down, at this many frames/s.
+    private static let standSpeed = 0.3
+    private static let standFrameRate = 10.0
     private static let stalledTint = SKColor(white: 0.1, alpha: 1)
 
     private let pointsPerMetre: CGFloat
     private let frames: [SKTexture]
     private let sprite: SKSpriteNode
     private let restY: CGFloat
+    private let standFrames: [SKTexture]
     private var framePhase = 0.0
+    /// 0 = riding pose, `standFrames.count` = foot planted.
+    private var standPhase: Double
 
     init(pointsPerMetre: CGFloat) {
         self.pointsPerMetre = pointsPerMetre
         frames = (0..<ArtInfo.shared.rideFrames).map { Art.texture("bike-\($0)") }
-        sprite = SKSpriteNode(texture: frames[0])
+        standFrames = (0..<ArtInfo.shared.standFrames).map { Art.texture("stand-\($0)") }
+        standPhase = Double(standFrames.count)   // a race starts with the foot down
+        sprite = SKSpriteNode(texture: standFrames.last ?? frames[0])
         restY = sprite.size.height / 2 - BikeNode.sink
         super.init()
         sprite.position = CGPoint(x: 0, y: restY)
@@ -53,6 +61,7 @@ final class BikeNode: SKNode {
             sprite.position.y = restY + BikeNode.tumbleHop * abs(sin(.pi * 2 * eased)) * (1 - eased * 0.6)
             if tumble >= 1 {
                 // Getting back on: blink until the crash time is over.
+                standPhase = 0
                 sprite.alpha = Int(remaining * BikeNode.blinkRate) % 2 == 0 ? 1 : 0.35
             }
             return
@@ -60,6 +69,14 @@ final class BikeNode: SKNode {
         if bike.stallRemaining > 0 {
             sprite.color = BikeNode.stalledTint
             sprite.colorBlendFactor = 0.35
+        }
+        // Foot down when standing on the ground, back on the peg twice as fast when moving off.
+        let standing = bike.phase == .grounded && bike.speed < BikeNode.standSpeed
+        standPhase += (standing ? 1 : -2) * BikeNode.standFrameRate * elapsed
+        standPhase = min(max(standPhase, 0), Double(standFrames.count))
+        if standPhase > 0 {
+            sprite.texture = standFrames[min(Int(standPhase), standFrames.count - 1)]
+            return
         }
         framePhase += min(bike.speed * BikeNode.framesPerMetre, BikeNode.maxFrameRate) * elapsed
         framePhase.formTruncatingRemainder(dividingBy: Double(frames.count))

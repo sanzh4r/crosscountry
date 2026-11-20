@@ -83,25 +83,28 @@ def haze_colour(backdrop):
 
 STRIP_WIDTH = {"mid": 2048, "near": 4096}     # strips tile horizontally in the game
 FLOOR_ROWS = 40                               # rows of desert floor baked under each strip's base line
-def round_wheel_bottoms(img, trim=2):
-    """PixelLab draws the tyres resting on the ground, with a flat bottom two rows deep. Clip the
-    corners of the lowest row so each wheel closes like its top does."""
-    img = img.copy()
+def bottom_runs(img):
+    """The (first, last) columns of each opaque run on the image's lowest row."""
     y = img.getbbox()[3] - 1
-    xs = [x for x in range(img.width) if img.getpixel((x, y))[3] > 0]
-    runs, start = [], None
-    for x in xs:
-        if start is None or x != prev + 1:
-            if start is not None:
-                runs.append((start, prev))
-            start = x
-        prev = x
-    if start is not None:
-        runs.append((start, prev))
+    runs = []
+    for x in range(img.width):
+        if img.getpixel((x, y))[3] > 0:
+            if runs and runs[-1][1] == x - 1:
+                runs[-1][1] = x
+            else:
+                runs.append([x, x])
+    return y, runs
+
+
+def round_wheel_bottoms(img, wheels, trim=2):
+    """PixelLab draws the tyres resting on the ground, with a flat bottom two rows deep. Clip the
+    corners of the lowest row under each wheel so it closes like its top does. `wheels` comes from
+    a riding frame, so a boot planted on the ground is left alone."""
+    img = img.copy()
+    y, runs = wheels
     for a, b in runs:
-        if b - a + 1 > 2 * trim + 2:
-            for x in list(range(a, a + trim)) + list(range(b - trim + 1, b + 1)):
-                img.putpixel((x, y), (0, 0, 0, 0))
+        for x in list(range(a, a + trim)) + list(range(b - trim + 1, b + 1)):
+            img.putpixel((x, y), (0, 0, 0, 0))
     return img
 
 
@@ -302,14 +305,20 @@ def assets():
     ride = [Image.open(f).convert("RGBA") for f in sorted((RAW / "ride").glob("ride-*.png"))]
     boxes = [f.getbbox() for f in ride]
     box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+    wheels = bottom_runs(ride[0])
     for i, f in enumerate(ride):
-        round_wheel_bottoms(f).crop(box).save(OUT / f"bike-{i}.png")
+        round_wheel_bottoms(f, wheels).crop(box).save(OUT / f"bike-{i}.png")
+    # Stopping: the rider takes the near foot off the peg and plants it. Frame 0 repeats the riding
+    # pose, so it is left out.
+    stand = [Image.open(f).convert("RGBA") for f in sorted((RAW / "stand").glob("stand-*.png"))][1:]
+    for i, f in enumerate(stand):
+        round_wheel_bottoms(f, wheels).crop(box).save(OUT / f"stand-{i}.png")
     (OUT / "bike.png").unlink(missing_ok=True)
     if (RAW / "gate.png").exists():
         snap(trimmed(load("gate")), palette).save(OUT / "gate.png")
     info = {
         "sand": tones, "rock": rock_tones(palette), "sky": backdrop.convert("RGB").getpixel((0, 0)),
-        "sun": max(palette, key=sum), "rideFrames": len(ride),
+        "sun": max(palette, key=sum), "rideFrames": len(ride), "standFrames": len(stand),
         "layers": {n: {"parallax": LAYERS[n][1], "baseAboveBottom": SCENE_H - LAYERS[n][3],
                        "floorRows": FLOOR_ROWS, "floor": floor_tones(n, palette, haze_rgb)[1]} for n in LAYERS},
     }
