@@ -9,7 +9,7 @@ struct GroundRidingTests {
     @Test func gasReachesNormalTopSpeedAndHolds() {
         var r = Race(track: flat); var peak = 0.0
         for _ in 0..<300 { r.step(.init(gas: true)); peak = max(peak, r.bike.speed) }
-        #expect(abs(r.bike.speed - 16) < 0.2); #expect(peak <= 16 + 8 * Race.dt)
+        #expect(abs(r.bike.speed - Tuning().normalTopSpeed) < 0.2); #expect(peak <= Tuning().normalTopSpeed + Tuning().gasAccel * Race.dt)
     }
     @Test func coastsToStopWithoutGoingBackwards() {
         var r = Race(track: flat); run(&r, 120, .init(gas: true)); let x0 = r.bike.x
