@@ -194,7 +194,7 @@ final class GameScene: SKScene {
     /// Moves the bike, camera and HUD to the race state. `elapsed` is simulated seconds since the last sync.
     private func syncNodes(snapCamera: Bool, elapsed: Double) {
         bikeNode.update(with: race.bike, tuning: race.tuning, elapsed: elapsed)
-        hud.update(with: race)
+        hud.update(with: race, elapsed: elapsed)
 
         let m = GameScene.pointsPerMetre
         let fractions = GameScene.bikeScreenFraction
@@ -247,7 +247,7 @@ final class GameScene: SKScene {
         let scale = max(viewSize.width / size.width, viewSize.height / size.height)
         visibleSize = CGSize(width: viewSize.width / scale, height: viewSize.height / scale)
         overlay.setScale(1 / scale)
-        hud.layout(viewSize: viewSize, insets: insets)
+        hud.layout(viewSize: viewSize, insets: insets, pixel: scale)
         input.layout(viewSize: viewSize, insets: insets)
     }
 }

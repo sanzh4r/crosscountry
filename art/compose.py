@@ -319,6 +319,11 @@ def assets():
     info = {
         "sand": tones, "rock": rock_tones(palette), "sky": backdrop.convert("RGB").getpixel((0, 0)),
         "sun": max(palette, key=sum), "rideFrames": len(ride), "standFrames": len(stand),
+        # Dashboard colours (the panel art itself comes from art/dash_mock.py export). "hot" is the
+        # warning red, kept brighter than the palette so it cannot be missed.
+        "dash": {**{k: min(palette, key=lambda p: sum((p[i] - c[i]) ** 2 for i in range(3)))
+                    for k, c in {"cream": (246, 232, 184), "sand": (236, 178, 97), "orange": (223, 144, 83),
+                                 "plum": (95, 55, 85)}.items()}, "hot": (216, 74, 62)},
         "layers": {n: {"parallax": LAYERS[n][1], "baseAboveBottom": SCENE_H - LAYERS[n][3],
                        "floorRows": FLOOR_ROWS, "floor": floor_tones(n, palette, haze_rgb)[1]} for n in LAYERS},
     }

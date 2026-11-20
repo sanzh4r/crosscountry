@@ -18,6 +18,8 @@ struct ArtInfo: Decodable, Sendable {
     let sun: [Int]
     let rideFrames: Int
     let standFrames: Int
+    /// Dashboard colours by name: cream, sand, orange, plum, hot.
+    let dash: [String: [Int]]
     let layers: [String: Layer]
 
     static let shared: ArtInfo = {
