@@ -83,6 +83,28 @@ def haze_colour(backdrop):
 
 STRIP_WIDTH = {"mid": 2048, "near": 4096}     # strips tile horizontally in the game
 FLOOR_ROWS = 40                               # rows of desert floor baked under each strip's base line
+def round_wheel_bottoms(img, trim=2):
+    """PixelLab draws the tyres resting on the ground, with a flat bottom two rows deep. Clip the
+    corners of the lowest row so each wheel closes like its top does."""
+    img = img.copy()
+    y = img.getbbox()[3] - 1
+    xs = [x for x in range(img.width) if img.getpixel((x, y))[3] > 0]
+    runs, start = [], None
+    for x in xs:
+        if start is None or x != prev + 1:
+            if start is not None:
+                runs.append((start, prev))
+            start = x
+        prev = x
+    if start is not None:
+        runs.append((start, prev))
+    for a, b in runs:
+        if b - a + 1 > 2 * trim + 2:
+            for x in list(range(a, a + trim)) + list(range(b - trim + 1, b + 1)):
+                img.putpixel((x, y), (0, 0, 0, 0))
+    return img
+
+
 PLANT = 3                                     # pieces sink this far into their floor
 
 
@@ -281,7 +303,7 @@ def assets():
     boxes = [f.getbbox() for f in ride]
     box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
     for i, f in enumerate(ride):
-        f.crop(box).save(OUT / f"bike-{i}.png")
+        round_wheel_bottoms(f).crop(box).save(OUT / f"bike-{i}.png")
     (OUT / "bike.png").unlink(missing_ok=True)
     if (RAW / "gate.png").exists():
         snap(trimmed(load("gate")), palette).save(OUT / "gate.png")
