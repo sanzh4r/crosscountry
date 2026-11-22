@@ -1,11 +1,12 @@
 import RaceCore
 import SpriteKit
 
-/// Everything shown around a race: the title screen, the start countdown and the results panel.
+/// Everything shown around a race: the title screen, the start countdown, the pause panel and the
+/// results panel.
 /// One unit is one art pixel and the origin is the centre of the view.
 @MainActor
 final class MenuNode: SKNode {
-    enum Action { case start, toggleSound, again, title }
+    enum Action { case start, toggleSound, again, title, resume }
 
     private static let placeNames = ["1ST", "2ND", "3RD", "4TH"]
     private static let riderNames = ["YOU", "CRIMSON", "VIOLET", "GREEN"]
@@ -31,6 +32,11 @@ final class MenuNode: SKNode {
     private let bestLabel: PixelLabel
     private var rowTimes: [PixelLabel] = []
     private var buttons: [(action: Action, frame: CGRect)] = []
+
+    private let pauseGroup = SKNode()
+    private var pauseButtons: [(action: Action, frame: CGRect)] = []
+    /// What the pause panel covered, to put back on resume.
+    private var hiddenByPause: (dim: Bool, count: Bool) = (true, true)
     private var blinkClock = 0.0
 
     override init() {
@@ -61,6 +67,9 @@ final class MenuNode: SKNode {
 
         buildResults()
         addChild(resultsGroup)
+        buildPause()
+        pauseGroup.zPosition = 3
+        addChild(pauseGroup)
         hide()
     }
 
@@ -96,20 +105,41 @@ final class MenuNode: SKNode {
             }
             rowTimes.append(time)
         }
-        for (action, text, x, width) in [(Action.again, "RACE AGAIN", CGFloat(-58), 132), (.title, "MENU", CGFloat(82), 76)] {
-            let frame = CGRect(x: x - CGFloat(width) / 2, y: -72 - 12, width: CGFloat(width), height: 24)
-            let plate = SKSpriteNode(texture: MenuNode.box(width: width, height: 24, fill: p.orange, border: p.cream,
-                                                           outline: p.dark))
-            plate.size = frame.size
-            plate.position = CGPoint(x: frame.midX, y: frame.midY)
-            plate.zPosition = 1
-            let label = PixelLabel(text, colour: p.dark, magnify: 2)
-            label.position = plate.position
-            label.zPosition = 2
-            resultsGroup.addChild(plate)
-            resultsGroup.addChild(label)
-            buttons.append((action, frame))
+        buttons = [(Action.again, "RACE AGAIN", CGFloat(-58), 132), (.title, "MENU", CGFloat(82), 76)].map {
+            ($0.0, addButton($0.1, to: resultsGroup, x: $0.2, y: -72, width: $0.3))
         }
+    }
+
+    private func buildPause() {
+        let p = palette
+        let panel = SKSpriteNode(texture: MenuNode.box(width: 180, height: 158, fill: p.plum, border: p.cream,
+                                                       outline: p.dark))
+        panel.size = CGSize(width: 180, height: 158)
+        pauseGroup.addChild(panel)
+        let heading = PixelLabel("PAUSED", colour: p.cream, shadow: p.dark, magnify: 4)
+        heading.position = CGPoint(x: 0, y: 50)
+        heading.zPosition = 1
+        pauseGroup.addChild(heading)
+        pauseButtons = [(Action.resume, "RESUME", CGFloat(14)), (.again, "RESTART", -18), (.title, "MENU", -50)].map {
+            ($0.0, addButton($0.1, to: pauseGroup, x: 0, y: $0.2, width: 132))
+        }
+    }
+
+    /// An orange plate with dark text, centred on (x, y) in `group`; returns its frame there.
+    private func addButton(_ text: String, to group: SKNode, x: CGFloat, y: CGFloat, width: Int) -> CGRect {
+        let p = palette
+        let frame = CGRect(x: x - CGFloat(width) / 2, y: y - 12, width: CGFloat(width), height: 24)
+        let plate = SKSpriteNode(texture: MenuNode.box(width: width, height: 24, fill: p.orange, border: p.cream,
+                                                       outline: p.dark))
+        plate.size = frame.size
+        plate.position = CGPoint(x: frame.midX, y: frame.midY)
+        plate.zPosition = 1
+        let label = PixelLabel(text, colour: p.dark, magnify: 2)
+        label.position = plate.position
+        label.zPosition = 2
+        group.addChild(plate)
+        group.addChild(label)
+        return frame
     }
 
     /// A filled box with a dark outline and a border inside it.
@@ -135,6 +165,23 @@ final class MenuNode: SKNode {
         titleGroup.isHidden = true
         countLabel.isHidden = true
         resultsGroup.isHidden = true
+        pauseGroup.isHidden = true
+    }
+
+    /// Puts the pause panel over whatever is showing.
+    func showPause() {
+        guard pauseGroup.isHidden else { return }
+        hiddenByPause = (dim.isHidden, countLabel.isHidden)
+        dim.isHidden = false
+        countLabel.isHidden = true
+        pauseGroup.isHidden = false
+    }
+
+    func hidePause() {
+        guard !pauseGroup.isHidden else { return }
+        pauseGroup.isHidden = true
+        dim.isHidden = hiddenByPause.dim
+        countLabel.isHidden = hiddenByPause.count
     }
 
     func showTitle(best: Double?, soundOn: Bool) {
@@ -179,6 +226,9 @@ final class MenuNode: SKNode {
 
     /// What a tap at `point` (in this node's coordinates) asks for, if anything.
     func action(at point: CGPoint) -> Action? {
+        if !pauseGroup.isHidden {
+            return pauseButtons.first { $0.frame.insetBy(dx: -6, dy: -4).contains(point) }?.action
+        }
         if !titleGroup.isHidden {
             let toggle = soundLabel.position
             if abs(point.x - toggle.x) < 70, abs(point.y - toggle.y) < 18 { return .toggleSound }

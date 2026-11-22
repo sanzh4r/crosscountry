@@ -5,7 +5,7 @@ import UIKit
 
 /// Merges the hardware keyboard (polled each frame) and the on-screen controls into one `RiderInput`.
 /// Keys: Z gas, X boost, left arrow lean back, right arrow lean forward, up and down arrows change
-/// lane, R restart, space or return to start.
+/// lane, R restart, P or escape pause, space or return to start.
 @MainActor
 final class InputSource {
     private static let margin: CGFloat = 14
@@ -24,6 +24,8 @@ final class InputSource {
     private(set) var current = RiderInput()
     /// True for exactly one `poll()` per press of R.
     private(set) var restartPressed = false
+    /// True for exactly one `poll()` per press of P or escape.
+    private(set) var pausePressed = false
     /// True for exactly one `poll()` per press of space, return or Z.
     private(set) var startPressed = false
 
@@ -43,6 +45,7 @@ final class InputSource {
     private var touchPoints: [ObjectIdentifier: CGPoint] = [:]
     private var restartWasHeld = false
     private var startWasHeld = false
+    private var pauseWasHeld = false
 
     /// Adds the controls to `overlay`, a camera child whose units are view points with the origin at the centre.
     func attach(to overlay: SKNode) {
@@ -111,6 +114,9 @@ final class InputSource {
         let restartHeld = key(.keyR)
         restartPressed = restartHeld && !restartWasHeld
         restartWasHeld = restartHeld
+        let pauseHeld = key(.keyP) || key(.escape)
+        pausePressed = pauseHeld && !pauseWasHeld
+        pauseWasHeld = pauseHeld
         let startHeld = key(.spacebar) || key(.returnOrEnter) || key(.keyZ)
         startPressed = startHeld && !startWasHeld
         startWasHeld = startHeld

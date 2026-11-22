@@ -195,3 +195,40 @@ final class ActionButton: SKNode {
         return canvas.texture()
     }
 }
+
+/// The pause button in the top corner: two bars and the word PAUSE.
+@MainActor
+final class PauseButton: SKNode {
+    /// Size of the button in art pixels, and how far outside it a touch still counts.
+    static let height = 22
+    static let width = 19 + PixelFont.width(of: "PAUSE") + 7
+    private static let slack: CGFloat = 8
+
+    override init() {
+        let palette = Palette.shared
+        let w = PauseButton.width, h = PauseButton.height
+        var canvas = PixelCanvas(width: w, height: h)
+        for y in 0..<h {
+            for x in 0..<w {
+                let edge = min(x, y, w - 1 - x, h - 1 - y)
+                let bar = (7...13).contains(y) && ((7...9).contains(x) || (12...14).contains(x))
+                canvas.set(x, y, Pixel(edge < 2 ? palette.dark : edge < 4 || bar ? palette.cream : palette.plum))
+            }
+        }
+        PixelFont.draw("PAUSE", into: &canvas, x: 19, y: 7, colour: Pixel(palette.cream))
+        let sprite = SKSpriteNode(texture: canvas.texture())
+        sprite.size = CGSize(width: w, height: h)
+        super.init()
+        addChild(sprite)
+    }
+
+    @available(*, unavailable)
+    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// `point` in the parent's coordinates.
+    func hitTest(_ point: CGPoint) -> Bool {
+        let slack = PauseButton.slack
+        return abs(point.x - position.x) / xScale <= CGFloat(PauseButton.width) / 2 + slack
+            && abs(point.y - position.y) / yScale <= CGFloat(PauseButton.height) / 2 + slack
+    }
+}

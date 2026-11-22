@@ -64,6 +64,14 @@ final class GameScene: SKScene {
 
     private enum Mode { case title, countdown, racing, results }
     private var mode = Mode.title
+    private let pauseButton = PauseButton()
+    /// True while the player has the race stopped behind the pause panel.
+    private var held = false
+    /// Pausing is offered from the countdown until the player crosses the line.
+    private var canPause: Bool { (mode == .countdown || mode == .racing) && !race.bike.finished && !held }
+    /// View points between the pause button and the tuning button to its right, which is 44 wide
+    /// and 8 from the corner.
+    private static let pauseButtonGap: CGFloat = 10
     /// Seconds for each number of the start countdown, how long "GO!" stays up, and the pause
     /// between crossing the line and the results panel.
     private static let countdownStep = 0.8
@@ -118,6 +126,10 @@ final class GameScene: SKScene {
         input.attach(to: overlay)
         menu.zPosition = 5
         overlay.addChild(menu)
+        pauseButton.alpha = 0.72
+        overlay.addChild(pauseButton)
+        NotificationCenter.default.addObserver(self, selector: #selector(pause),
+                                               name: UIApplication.willResignActiveNotification, object: nil)
         enterTitle()
         #if DEBUG
         applySnapshotMode()
@@ -136,6 +148,8 @@ final class GameScene: SKScene {
         seatRivals()
         clock = FixedStepClock()
         lastUpdateTime = nil
+        held = false
+        menu.hidePause()
         effects.forEach { $0.clear() }
         sound.raceStarted()
         shake = 0
@@ -186,8 +200,26 @@ final class GameScene: SKScene {
         menu.showResults(for: race, best: bestTime, newBest: beatBest)
     }
 
+    /// Stops the race behind the pause panel; also called when the app leaves the foreground.
+    @objc private func pause() {
+        guard canPause else { return }
+        held = true
+        input.controlsVisible = false
+        menu.showPause()
+        sound.setSilenced(true)
+    }
+
+    private func resume() {
+        held = false
+        input.controlsVisible = true
+        menu.hidePause()
+        lastUpdateTime = nil
+    }
+
     private func perform(_ action: MenuNode.Action) {
         switch action {
+        case .resume:
+            resume()
         case .start:
             beginCountdown()
         case .toggleSound:
@@ -211,7 +243,7 @@ final class GameScene: SKScene {
     override var isPaused: Bool {
         didSet {
             if oldValue && !isPaused { lastUpdateTime = nil }
-            sound.setSilenced(isPaused)
+            sound.setSilenced(isPaused || held)
         }
     }
 
@@ -233,6 +265,16 @@ final class GameScene: SKScene {
         menu.update(elapsed: elapsed)
         if input.restartPressed, mode != .title {
             restart(with: race.tuning)
+            return
+        }
+        if input.pausePressed {
+            if held { resume() } else { pause() }
+        }
+        pauseButton.isHidden = !canPause
+        if held {
+            #if DEBUG
+            saveDueSnapshot(after: elapsed)
+            #endif
             return
         }
         switch mode {
@@ -346,6 +388,9 @@ final class GameScene: SKScene {
             hud.isHidden = false
         case "count":
             beginCountdown()
+        case "pause":
+            beginCountdown()
+            pause()
         case "results":
             // Start just before the line so the results panel comes up within seconds.
             var bike = BikeState()
@@ -376,7 +421,11 @@ final class GameScene: SKScene {
     // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if mode == .title || mode == .results {
+        if canPause, touches.contains(where: { pauseButton.hitTest($0.location(in: overlay)) }) {
+            pause()
+            return
+        }
+        if mode == .title || mode == .results || held {
             for touch in touches {
                 if let action = menu.action(at: touch.location(in: menu)) {
                     perform(action)
@@ -466,6 +515,10 @@ final class GameScene: SKScene {
         overlay.setScale(1 / scale)
         hud.layout(viewSize: viewSize, insets: insets, pixel: scale)
         input.layout(viewSize: viewSize, insets: insets, pixel: scale)
+        pauseButton.setScale(scale)
+        let half = CGFloat(PauseButton.width) * scale / 2
+        pauseButton.position = CGPoint(x: viewSize.width / 2 - insets.right - 52 - GameScene.pauseButtonGap - half,
+                                       y: viewSize.height / 2 - 30)
         menu.setScale(scale)
         menu.layout(size: visibleSize)
     }
