@@ -65,9 +65,9 @@ public struct Rival: Sendable {
     /// Speed the rider is happy to hold, as a share of the boosted top speed; above it they roll off.
     private var comfort: Double {
         switch skill {
-        case .rookie: 0.3
-        case .steady: 0.32
-        case .sharp: 0.34
+        case .rookie: 0.315
+        case .steady: 0.335
+        case .sharp: 0.365
         }
     }
 

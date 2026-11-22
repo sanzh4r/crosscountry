@@ -52,6 +52,7 @@ final class GameScene: SKScene {
     }
     /// Changes on every restart so the rivals do not ride the same race twice.
     private var raceNumber: UInt64 = 0
+    private let sound = SoundPlayer()
     private let cameraNode = SKCameraNode()
     /// Camera child scaled so that one unit is one view point; holds the HUD and buttons.
     private let overlay = SKNode()
@@ -108,6 +109,7 @@ final class GameScene: SKScene {
         clock = FixedStepClock()
         lastUpdateTime = nil
         effects.forEach { $0.clear() }
+        sound.raceStarted()
         shake = 0
         syncNodes(snapCamera: true, elapsed: 0)
     }
@@ -119,7 +121,10 @@ final class GameScene: SKScene {
     }
 
     override var isPaused: Bool {
-        didSet { if oldValue && !isPaused { lastUpdateTime = nil } }
+        didSet {
+            if oldValue && !isPaused { lastUpdateTime = nil }
+            sound.setSilenced(isPaused)
+        }
     }
 
     override func didMove(to view: SKView) {
@@ -166,6 +171,7 @@ final class GameScene: SKScene {
         for i in rivals.indices { inputs.append(rivals[i].input(for: i + 1, in: race)) }
         race.step(inputs)
         lastInputs = inputs
+        playEvents(from: before[0], to: race.bikes[0])
         let m = GameScene.pointsPerMetre
         for (i, after) in race.bikes.enumerated() {
             guard before[i].phase == .airborne, after.phase != .airborne else { continue }
@@ -176,8 +182,29 @@ final class GameScene: SKScene {
             effects[i].landing(at: CGPoint(x: after.x * m, y: after.y * m + BikeNode.laneRise(after.lane)),
                                impact: impact, crashed: crashed)
             guard i == 0 else { continue }
+            sound.play(crashed ? .crash : .land, volume: crashed ? 1 : Float(min(0.35 + impact / 14, 1)))
             shake = max(shake, crashed ? GameScene.crashShake
                                        : min(CGFloat(impact) * GameScene.shakePerImpact, GameScene.maxLandingShake))
+        }
+    }
+
+    /// Sounds for what changed on the player's bike in one step (landings are handled with their dust).
+    private func playEvents(from before: BikeState, to after: BikeState) {
+        if before.stallRemaining == 0, after.stallRemaining > 0 { sound.play(.stall) }
+        if !before.finished, after.finished { sound.raceFinished(won: race.position(of: 0) == 1) }
+        if after.targetLane != before.targetLane {
+            sound.play(.lane, volume: 0.6)
+        } else if after.laneCooldown > before.laneCooldown {
+            // The lane was taken: the change was refused.
+            sound.play(.bump)
+        }
+        func surface(_ bike: BikeState) -> PieceKind? {
+            bike.phase == .grounded ? race.surface(at: bike.x, lane: Int(bike.lane.rounded())) : nil
+        }
+        let now = surface(after)
+        if now != surface(before) {
+            if now == .boostPad { sound.play(.pad) }
+            if now == .mud { sound.play(.mud, volume: 0.8) }
         }
     }
 
@@ -200,6 +227,7 @@ final class GameScene: SKScene {
         let url = folder.appendingPathComponent("snapshot-\(Int((due * 10).rounded())).png")
         try? UIImage(cgImage: image).pngData()?.write(to: url)
         print("snapshot", url.path, "fps", 1 / max(view.preferredFramesPerSecond == 0 ? 0.016 : lastFrameGap, 0.001))
+        print("sound", sound.status)
         if snapshotTimes.isEmpty { exit(0) }
     }
     #endif
@@ -231,6 +259,7 @@ final class GameScene: SKScene {
             node.update(with: bike, tuning: race.tuning, elapsed: elapsed)
         }
         hud.update(with: race, elapsed: elapsed)
+        sound.update(with: race.bike, input: lastInputs.first ?? RiderInput(), tuning: race.tuning, elapsed: elapsed)
 
         let m = GameScene.pointsPerMetre
         let fractions = GameScene.bikeScreenFraction
