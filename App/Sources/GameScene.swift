@@ -27,6 +27,9 @@ final class GameScene: SKScene {
     /// Frame gaps longer than this (the view was paused or the app was in the background) count as zero.
     private static let maxFrameGap = 0.25
 
+    /// The track being raced.
+    private static let track = Track.duskRun
+
     private var race: Race
     private var clock = FixedStepClock()
     private var lastUpdateTime: TimeInterval?
@@ -34,10 +37,12 @@ final class GameScene: SKScene {
 
     private let terrainNode: TerrainNode
     private let background = BackgroundNode()
-    private let effects = EffectsNode()
+    /// Dust, flame and smoke for each bike in `race.bikes`, the player first.
+    private let effects = (0...GameScene.rivalSkills.count).map { _ in EffectsNode() }
     /// Current screen-shake strength in scene points; dies away quickly.
     private var shake: CGFloat = 0
-    private var lastInput = RiderInput()
+    /// What each bike was asked to do on the latest step.
+    private var lastInputs: [RiderInput] = []
     private let bikeNode = BikeNode(pointsPerMetre: GameScene.pointsPerMetre)
     /// Computer riders for `race.bikes[1...]`, and their sprites.
     private static let rivalSkills: [Rival.Skill] = [.rookie, .steady, .sharp]
@@ -65,16 +70,18 @@ final class GameScene: SKScene {
     var tuning: Tuning { race.tuning }
 
     override init() {
-        race = Race(track: .prototype, tuning: Tuning(), rivals: GameScene.rivalSkills.count)
-        terrainNode = TerrainNode(track: .prototype, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
+        race = Race(track: GameScene.track, tuning: Tuning(), rivals: GameScene.rivalSkills.count)
+        terrainNode = TerrainNode(track: GameScene.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
         super.init(size: GameScene.sceneSize)
         scaleMode = .aspectFill
         backgroundColor = Art.colour(ArtInfo.shared.sky)
 
         terrainNode.zPosition = 0
         bikeNode.zPosition = 1
-        effects.zPosition = 2
-        addChild(effects)
+        for node in effects {
+            node.zPosition = 2
+            addChild(node)
+        }
         overlay.zPosition = 10
         addChild(terrainNode)
         addChild(bikeNode)
@@ -93,14 +100,14 @@ final class GameScene: SKScene {
     @available(*, unavailable)
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    /// Starts a fresh race on the prototype track with `tuning`; resets the clock and the camera.
+    /// Starts a fresh race with `tuning`; resets the clock and the camera.
     func restart(with tuning: Tuning) {
-        race = Race(track: .prototype, tuning: tuning, rivals: GameScene.rivalSkills.count)
+        race = Race(track: GameScene.track, tuning: tuning, rivals: GameScene.rivalSkills.count)
         raceNumber += 1
         seatRivals()
         clock = FixedStepClock()
         lastUpdateTime = nil
-        effects.clear()
+        effects.forEach { $0.clear() }
         shake = 0
         syncNodes(snapCamera: true, elapsed: 0)
     }
@@ -152,24 +159,26 @@ final class GameScene: SKScene {
         syncNodes(snapCamera: false, elapsed: Double(steps) * Race.dt)
     }
 
-    /// One simulation step, plus the dust and shake for a landing or crash it caused.
+    /// One simulation step, plus the dust for every landing or crash it caused and the shake for the player's.
     private func step(_ riderInput: RiderInput) {
-        let before = race.bike
+        let before = race.bikes
         var inputs = [riderInput]
         for i in rivals.indices { inputs.append(rivals[i].input(for: i + 1, in: race)) }
         race.step(inputs)
-        lastInput = riderInput
-        let after = race.bike
-        guard before.phase == .airborne, after.phase != .airborne else { return }
-        var crashed = false
-        if case .crashed = after.phase { crashed = true }
-        let impact = -before.vy
-        guard crashed || impact > GameScene.minImpact else { return }
+        lastInputs = inputs
         let m = GameScene.pointsPerMetre
-        effects.landing(at: CGPoint(x: after.x * m, y: after.y * m + BikeNode.laneRise(after.lane)),
-                        impact: impact, crashed: crashed)
-        shake = max(shake, crashed ? GameScene.crashShake
-                                   : min(CGFloat(impact) * GameScene.shakePerImpact, GameScene.maxLandingShake))
+        for (i, after) in race.bikes.enumerated() {
+            guard before[i].phase == .airborne, after.phase != .airborne else { continue }
+            var crashed = false
+            if case .crashed = after.phase { crashed = true }
+            let impact = -before[i].vy
+            guard crashed || impact > GameScene.minImpact else { continue }
+            effects[i].landing(at: CGPoint(x: after.x * m, y: after.y * m + BikeNode.laneRise(after.lane)),
+                               impact: impact, crashed: crashed)
+            guard i == 0 else { continue }
+            shake = max(shake, crashed ? GameScene.crashShake
+                                       : min(CGFloat(impact) * GameScene.shakePerImpact, GameScene.maxLandingShake))
+        }
     }
 
     #if DEBUG
@@ -248,14 +257,16 @@ final class GameScene: SKScene {
         cameraNode.position = CGPoint(x: x + jolt.x, y: y + jolt.y)
         background.update(cameraX: x, rise: y - restY, visible: visibleSize)
 
-        let bike = race.bike
-        let angle = CGFloat(bike.angle)
-        let base = CGPoint(x: bike.x * m, y: bike.y * m + BikeNode.laneRise(bike.lane))
-        let rear = CGPoint(x: base.x - 20 * cos(angle), y: base.y - 20 * sin(angle) + 1)
-        let exhaust = CGPoint(x: rear.x - 10 * cos(angle) - 13 * sin(angle), y: rear.y - 10 * sin(angle) + 13 * cos(angle))
-        effects.ride(bike: bike, rearWheel: rear, exhaust: exhaust,
-                     bikeVelocity: CGVector(dx: bike.vx * m, dy: bike.vy * m),
-                     boosting: lastInput.boost, elapsed: elapsed)
+        for (i, bike) in race.bikes.enumerated() {
+            let angle = CGFloat(bike.angle)
+            let base = CGPoint(x: bike.x * m, y: bike.y * m + BikeNode.laneRise(bike.lane))
+            let rear = CGPoint(x: base.x - 20 * cos(angle), y: base.y - 20 * sin(angle) + 1)
+            let exhaust = CGPoint(x: rear.x - 10 * cos(angle) - 13 * sin(angle),
+                                  y: rear.y - 10 * sin(angle) + 13 * cos(angle))
+            effects[i].ride(bike: bike, rearWheel: rear, exhaust: exhaust,
+                            bikeVelocity: CGVector(dx: bike.vx * m, dy: bike.vy * m),
+                            boosting: i < lastInputs.count && lastInputs[i].boost, elapsed: elapsed)
+        }
         terrainNode.show(minX: x - visibleSize.width / 2, maxX: x + visibleSize.width / 2)
     }
 

@@ -30,7 +30,7 @@ public struct Rival: Sendable {
         switch skill {
         case .rookie: (0.12, 0.02)
         case .steady: (0.45, 0.1)
-        case .sharp: (0.65, 0.25)
+        case .sharp: (0.3, 0.08)
         }
     }
 
@@ -39,7 +39,7 @@ public struct Rival: Sendable {
         switch skill {
         case .rookie: 0.6
         case .steady: 0.35
-        case .sharp: 0.18
+        case .sharp: 0.31
         }
     }
 
@@ -47,8 +47,8 @@ public struct Rival: Sendable {
     private var attention: Double {
         switch skill {
         case .rookie: 0.4
-        case .steady: 0.7
-        case .sharp: 0.95
+        case .steady: 0.35
+        case .sharp: 0.5
         }
     }
 
@@ -57,8 +57,8 @@ public struct Rival: Sendable {
     private var hesitation: Double {
         switch skill {
         case .rookie: 0.85
-        case .steady: 0.6
-        case .sharp: 0.45
+        case .steady: 0.8
+        case .sharp: 0.7
         }
     }
 
@@ -66,8 +66,8 @@ public struct Rival: Sendable {
     private var comfort: Double {
         switch skill {
         case .rookie: 0.3
-        case .steady: 0.42
-        case .sharp: 0.52
+        case .steady: 0.32
+        case .sharp: 0.34
         }
     }
 

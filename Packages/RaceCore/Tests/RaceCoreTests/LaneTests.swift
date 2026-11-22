@@ -88,4 +88,20 @@ struct RivalTests {
         print("rival average times", totals.map { $0 / 12 })
         #expect(totals[2] < totals[0])
     }
+
+    @Test func duskRunIsValidAndTakesAboutAMinute() throws {
+        try Track.duskRun.validate()
+        var r = Race(track: .duskRun, rivals: 3)
+        var riders = [Rival(skill: .rookie, seed: 3), Rival(skill: .steady, seed: 4), Rival(skill: .sharp, seed: 5)]
+        var n = 0
+        while !r.bikes.dropFirst().allSatisfy(\.finished) && n < 60 * 300 {
+            var inputs = [RiderInput()]
+            for i in riders.indices { inputs.append(riders[i].input(for: i + 1, in: r)) }
+            r.step(inputs); n += 1
+        }
+        let times = r.bikes.dropFirst().map { $0.finishTime ?? .infinity }
+        print("dusk run rival times", times)
+        let fastest = times.min() ?? 0, slowest = times.max() ?? .infinity
+        #expect(fastest > 60); #expect(slowest < 120)
+    }
 }

@@ -2,7 +2,7 @@ import RaceCore
 import SpriteKit
 import UIKit
 
-/// The dashboard (speed and engine heat), race time as `0:00.0`, place in the race as `2/4`, and the large final time once finished.
+/// The dashboard (speed and engine heat), a strip showing every rider's progress along the track, race time as `0:00.0`, place in the race as `2/4`, and the large final time once finished.
 /// Laid out in screen points (its parent is scaled so one unit is one view point).
 @MainActor
 final class HUDNode: SKNode {
@@ -14,6 +14,17 @@ final class HUDNode: SKNode {
     private let finalTimeLabel = HUDNode.label(size: 64)
     private let dashboard = DashboardNode()
 
+    /// Progress strip under the dashboard, in art pixels: a track line, a finish post, and one marker
+    /// per rider in that rider's suit colour (the player's is larger and drawn on top).
+    private static let stripWidth: CGFloat = 150
+    private static let riderColours: [SKColor] = [
+        SKColor(hue: 0.5, saturation: 0.75, brightness: 0.85, alpha: 1),
+        SKColor(hue: 0.97, saturation: 0.8, brightness: 0.9, alpha: 1),
+        SKColor(hue: 0.76, saturation: 0.6, brightness: 0.95, alpha: 1),
+        SKColor(hue: 0.27, saturation: 0.75, brightness: 0.8, alpha: 1)]
+    private let strip = SKNode()
+    private var markers: [SKSpriteNode] = []
+
     override init() {
         super.init()
         timeLabel.horizontalAlignmentMode = .left
@@ -23,7 +34,14 @@ final class HUDNode: SKNode {
         finalTimeLabel.horizontalAlignmentMode = .center
         finalTimeLabel.verticalAlignmentMode = .center
         finalTimeLabel.isHidden = true
-        for node in [timeLabel, positionLabel, finalTimeLabel, dashboard] { addChild(node) }
+        for node in [timeLabel, positionLabel, finalTimeLabel, dashboard, strip] { addChild(node) }
+        let colours = ArtInfo.shared.dash
+        let line = SKSpriteNode(color: Art.colour(colours["sand"] ?? [0, 0, 0]),
+                                size: CGSize(width: HUDNode.stripWidth, height: 2))
+        let post = SKSpriteNode(color: Art.colour(colours["cream"] ?? [255, 255, 255]), size: CGSize(width: 2, height: 8))
+        post.position = CGPoint(x: HUDNode.stripWidth / 2, y: 0)
+        strip.addChild(line)
+        strip.addChild(post)
     }
 
     @available(*, unavailable)
@@ -39,6 +57,8 @@ final class HUDNode: SKNode {
         dashboard.position = CGPoint(x: 0, y: viewSize.height / 2 - HUDNode.dashboardGap
                                      - DashboardNode.size.height * pixel / 2)
         positionLabel.position = CGPoint(x: left, y: top - 32)
+        strip.setScale(pixel)
+        strip.position = CGPoint(x: 0, y: dashboard.position.y - (DashboardNode.size.height / 2 + 7) * pixel)
         finalTimeLabel.position = CGPoint(x: 0, y: 30)
     }
 
@@ -50,6 +70,19 @@ final class HUDNode: SKNode {
         positionLabel.text = place
         positionLabel.isHidden = race.bikes.count < 2
         finalTimeLabel.isHidden = !race.bike.finished
+
+        while markers.count < race.bikes.count {
+            let own = markers.isEmpty
+            let colour = HUDNode.riderColours[markers.count % HUDNode.riderColours.count]
+            let marker = SKSpriteNode(color: colour, size: own ? CGSize(width: 5, height: 7) : CGSize(width: 3, height: 5))
+            marker.zPosition = own ? 2 : 1
+            strip.addChild(marker)
+            markers.append(marker)
+        }
+        for (marker, bike) in zip(markers, race.bikes) {
+            let done = min(max(bike.x / race.terrain.finishX, 0), 1)
+            marker.position = CGPoint(x: (CGFloat(done) - 0.5) * HUDNode.stripWidth, y: 0)
+        }
         finalTimeLabel.text = race.bikes.count < 2 ? time : "\(place)  \(time)"
     }
 
