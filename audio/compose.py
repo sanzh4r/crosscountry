@@ -4,6 +4,7 @@
 Effects become mono 22.05 kHz WAV: one-shots have their silence trimmed and get a short fade at
 both ends; loops have their tail cross-faded into their head so the repeat has no click. Every
 effect is brought to the same peak level. The music and the two finish stings become AAC.
+The start countdown beeps are not generated: they are plain square waves made here.
 
     python3 audio/compose.py
 """
@@ -66,8 +67,28 @@ def levelled(samples):
     return array.array("h", (int(s * PEAK / peak) for s in samples))
 
 
+def write(name, samples):
+    with wave.open(str(OUT / f"{name}.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(samples.tobytes())
+
+
+def beep(hz, seconds):
+    """A square wave that dies away, like a console start light."""
+    n = int(seconds * RATE)
+    samples = array.array("h")
+    for i in range(n):
+        level = PEAK * 0.6 * (1 - i / n) ** 1.5
+        samples.append(int(level if (i * hz * 2 // RATE) % 2 == 0 else -level))
+    return faded(samples)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    write("count", beep(440, 0.18))
+    write("go", beep(880, 0.5))
     for mp3 in sorted(RAW.glob("*.mp3")):
         name = mp3.stem
         if name in MUSIC:
@@ -79,11 +100,7 @@ def main():
         samples = decode(mp3)
         samples = looped(samples) if name in LOOPS else faded(trimmed(samples))
         samples = levelled(samples)
-        with wave.open(str(OUT / f"{name}.wav"), "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(RATE)
-            w.writeframes(samples.tobytes())
+        write(name, samples)
         rms = (sum(s * s for s in samples) / len(samples)) ** 0.5 / 32767
         print(f"{name:8} {len(samples) / RATE:5.2f} s  rms {rms:.3f}  {'loop' if name in LOOPS else ''}")
 

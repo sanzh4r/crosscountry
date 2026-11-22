@@ -7,7 +7,7 @@ import RaceCore
 @MainActor
 final class SoundPlayer {
     enum Effect: String, CaseIterable {
-        case land, crash, stall, warn, pad, mud, lane, bump
+        case land, crash, stall, warn, pad, mud, lane, bump, count, go
     }
 
     // Loudness, 0...1.
@@ -47,6 +47,23 @@ final class SoundPlayer {
     private var rate = SoundPlayer.engineRate.slow
     private var warningClock = 0.0
     private var silenced = false
+
+    /// The player's sound setting, kept between launches. Off stops everything, music included.
+    var isOn: Bool = UserDefaults.standard.object(forKey: "soundOn") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isOn, forKey: "soundOn")
+            if isOn {
+                startIfNeeded()
+            } else {
+                music?.pause()
+                stopFanfares()
+                enginePlayer.volume = 0
+                boostPlayer.volume = 0
+                engineLevel = 0
+                boostLevel = 0
+            }
+        }
+    }
 
     init() {
         // Plays even with the phone's silent switch on, and alongside the player's own music.
@@ -121,7 +138,7 @@ final class SoundPlayer {
                 boostPlayer.play()
             }
         }
-        if music?.isPlaying == false { music?.play() }
+        if isOn, music?.isPlaying == false { music?.play() }
     }
 
     /// What is loaded and playing, for checking a build without ears.
@@ -159,7 +176,7 @@ final class SoundPlayer {
 
     /// The player crossed the line; `won` is true for first place.
     func raceFinished(won: Bool) {
-        guard !silenced else { return }
+        guard !silenced, isOn else { return }
         music?.volume = SoundPlayer.musicVolumeAfterFinish
         let fanfare = won ? winFanfare : finishFanfare
         fanfare?.currentTime = 0
@@ -167,7 +184,7 @@ final class SoundPlayer {
     }
 
     func play(_ effect: Effect, volume: Float = 1) {
-        guard !silenced, engine.isRunning, let buffer = effects[effect] else { return }
+        guard !silenced, isOn, engine.isRunning, let buffer = effects[effect] else { return }
         let voice = voices[nextVoice]
         nextVoice = (nextVoice + 1) % voices.count
         voice.stop()
@@ -176,15 +193,16 @@ final class SoundPlayer {
         voice.play()
     }
 
-    /// Continuous sound for this frame. `elapsed` is simulated seconds since the last call.
-    func update(with bike: BikeState, input: RiderInput, tuning: Tuning, elapsed: Double) {
+    /// Continuous sound for this frame. `elapsed` is seconds since the last call; `engineOn` is false
+    /// on the title screen, where only the music plays.
+    func update(with bike: BikeState, input: RiderInput, tuning: Tuning, engineOn: Bool, elapsed: Double) {
         // The race is being drawn, so the game is not paused.
         setSilenced(false)
         startIfNeeded()
         var crashed = false
         if case .crashed = bike.phase { crashed = true }
         let stalled = bike.stallRemaining > 0
-        let running = !stalled && !crashed
+        let running = !stalled && !crashed && engineOn && isOn
         let gas = (input.gas || input.boost) && running && !bike.finished
         let airborne = bike.phase == .airborne
 

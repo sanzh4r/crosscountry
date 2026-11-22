@@ -10,8 +10,9 @@ final class GameScene: SKScene {
     /// Height 0 sits this far above the bottom of the visible area when the bike is at height 0.
     private static let groundBaseline: CGFloat = 88
     /// Fraction of the visible width between the left edge and the bike: standing still, and at
-    /// boost top speed (the bike drops back so more of the track ahead shows).
-    private static let bikeScreenFraction: (slow: CGFloat, fast: CGFloat) = (0.34, 0.2)
+    /// boost top speed (the bike drops back so more of the track ahead shows, but stays clear of the
+    /// left-hand control).
+    private static let bikeScreenFraction: (slow: CGFloat, fast: CGFloat) = (0.34, 0.24)
     /// Rate (1/s) at which the bike's place on screen follows its speed.
     private static let lookAheadEasing = 1.5
     /// Screen shake: scene points per m/s of landing speed, the cap for a landing, the strength of
@@ -58,6 +59,26 @@ final class GameScene: SKScene {
     private let overlay = SKNode()
     private let hud = HUDNode()
     private let input = InputSource()
+    /// Title, countdown and results; a child of the overlay scaled so one unit is one art pixel.
+    private let menu = MenuNode()
+
+    private enum Mode { case title, countdown, racing, results }
+    private var mode = Mode.title
+    /// Seconds for each number of the start countdown, how long "GO!" stays up, and the pause
+    /// between crossing the line and the results panel.
+    private static let countdownStep = 0.8
+    private static let goTime = 0.8
+    private static let resultsPause = 1.6
+    private var countdown = 0.0
+    private var goRemaining = 0.0
+    private var resultsDelay = 0.0
+    private var beatBest = false
+    private static let bestTimeKey = "bestTime.duskRun"
+    /// The player's fastest finish on this track, kept between launches.
+    private var bestTime: Double? {
+        get { UserDefaults.standard.object(forKey: GameScene.bestTimeKey) as? Double }
+        set { UserDefaults.standard.set(newValue, forKey: GameScene.bestTimeKey) }
+    }
 
     private var laidOutViewSize = CGSize.zero
     private var laidOutInsets = UIEdgeInsets.zero
@@ -95,13 +116,20 @@ final class GameScene: SKScene {
         cameraNode.addChild(overlay)
         overlay.addChild(hud)
         input.attach(to: overlay)
+        menu.zPosition = 5
+        overlay.addChild(menu)
+        enterTitle()
+        #if DEBUG
+        applySnapshotMode()
+        #endif
         syncNodes(snapCamera: true, elapsed: 0)
     }
 
     @available(*, unavailable)
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    /// Starts a fresh race with `tuning`; resets the clock and the camera.
+    /// Sets up a fresh race with `tuning` and resets the clock and the camera. From the title screen it
+    /// waits there; otherwise the start countdown begins.
     func restart(with tuning: Tuning) {
         race = Race(track: GameScene.track, tuning: tuning, rivals: GameScene.rivalSkills.count)
         raceNumber += 1
@@ -111,7 +139,67 @@ final class GameScene: SKScene {
         effects.forEach { $0.clear() }
         sound.raceStarted()
         shake = 0
+        if mode != .title { beginCountdown() }
         syncNodes(snapCamera: true, elapsed: 0)
+    }
+
+    // MARK: Race flow
+
+    private func enterTitle() {
+        mode = .title
+        input.controlsVisible = false
+        hud.isHidden = true
+        menu.showTitle(best: bestTime, soundOn: sound.isOn)
+    }
+
+    private func beginCountdown() {
+        mode = .countdown
+        countdown = 3 * GameScene.countdownStep
+        goRemaining = 0
+        input.controlsVisible = true
+        hud.isHidden = false
+        menu.showCountdown("3")
+        sound.play(.count)
+    }
+
+    private func advanceCountdown(by elapsed: Double) {
+        let shown = Int((countdown / GameScene.countdownStep).rounded(.up))
+        countdown -= elapsed
+        if countdown <= 0 {
+            mode = .racing
+            clock = FixedStepClock()
+            goRemaining = GameScene.goTime
+            menu.showCountdown("GO!")
+            sound.play(.go)
+        } else {
+            let now = Int((countdown / GameScene.countdownStep).rounded(.up))
+            if now != shown {
+                menu.showCountdown("\(now)")
+                sound.play(.count)
+            }
+        }
+    }
+
+    private func showResults() {
+        mode = .results
+        input.controlsVisible = false
+        menu.showResults(for: race, best: bestTime, newBest: beatBest)
+    }
+
+    private func perform(_ action: MenuNode.Action) {
+        switch action {
+        case .start:
+            beginCountdown()
+        case .toggleSound:
+            sound.isOn.toggle()
+            menu.showTitle(best: bestTime, soundOn: sound.isOn)
+        case .again:
+            restart(with: race.tuning)
+        case .title:
+            mode = .title
+            restart(with: race.tuning)
+            enterTitle()
+        }
     }
 
     private func seatRivals() {
@@ -141,27 +229,49 @@ final class GameScene: SKScene {
         lastUpdateTime = currentTime
         lastFrameGap = elapsed
 
-        input.showsRestartButton = race.bike.finished
         input.poll()
-        if input.restartPressed {
+        menu.update(elapsed: elapsed)
+        if input.restartPressed, mode != .title {
             restart(with: race.tuning)
             return
         }
-        let steps = clock.advance(by: elapsed)
-        #if DEBUG
-        if let demo = demoInput {
-            let boosted = RiderInput(gas: true, boost: race.time < 2.2 || (race.time > 4 && race.time < 6.5), lean: demo.lean)
-            for _ in 0..<steps { step(boosted) }
+        switch mode {
+        case .title:
+            if input.startPressed { beginCountdown() }
+            syncNodes(snapCamera: false, elapsed: elapsed)
+        case .countdown:
+            advanceCountdown(by: elapsed)
+            syncNodes(snapCamera: false, elapsed: elapsed)
+        case .racing, .results:
+            let steps = clock.advance(by: elapsed)
+            for _ in 0..<steps {
+                step(riderInput())
+                input.laneChangeTaken()
+            }
+            if goRemaining > 0 {
+                goRemaining -= elapsed
+                if goRemaining <= 0, mode == .racing { menu.showCountdown(nil) }
+            }
+            if mode == .racing, race.bike.finished {
+                resultsDelay -= elapsed
+                if resultsDelay <= 0 { showResults() }
+            }
+            if mode == .results { menu.updateResults(for: race) }
             syncNodes(snapCamera: false, elapsed: Double(steps) * Race.dt)
-            saveDueSnapshot()
-            return
+        }
+        #if DEBUG
+        saveDueSnapshot(after: elapsed)
+        #endif
+    }
+
+    /// What the player's bike is asked to do on the next step.
+    private func riderInput() -> RiderInput {
+        #if DEBUG
+        if snapshotMode != nil {
+            return RiderInput(gas: true, boost: race.time < 2.2 || (race.time > 4 && race.time < 6.5), lean: 0)
         }
         #endif
-        for _ in 0..<steps {
-            step(input.current)
-            input.laneChangeTaken()
-        }
-        syncNodes(snapCamera: false, elapsed: Double(steps) * Race.dt)
+        return input.current
     }
 
     /// One simulation step, plus the dust for every landing or crash it caused and the shake for the player's.
@@ -191,7 +301,12 @@ final class GameScene: SKScene {
     /// Sounds for what changed on the player's bike in one step (landings are handled with their dust).
     private func playEvents(from before: BikeState, to after: BikeState) {
         if before.stallRemaining == 0, after.stallRemaining > 0 { sound.play(.stall) }
-        if !before.finished, after.finished { sound.raceFinished(won: race.position(of: 0) == 1) }
+        if !before.finished, after.finished {
+            sound.raceFinished(won: race.position(of: 0) == 1)
+            resultsDelay = GameScene.resultsPause
+            beatBest = bestTime.map { race.time < $0 } ?? true
+            if beatBest { bestTime = race.time }
+        }
         if after.targetLane != before.targetLane {
             sound.play(.lane, volume: 0.6)
         } else if after.laneCooldown > before.laneCooldown {
@@ -211,16 +326,42 @@ final class GameScene: SKScene {
     #if DEBUG
     // MARK: Snapshots (debug)
 
-    /// Race times (seconds) from the SNAPSHOT_AT environment variable, e.g. "2,6,11". When set, the
-    /// bike rides itself with the gas held and the view is saved to Documents at each time.
+    /// Seconds since launch from the SNAPSHOT_AT environment variable, e.g. "2,6,11". When set, the view
+    /// is saved to Documents at each time and the app then quits. SNAPSHOT_MODE picks what is shown:
+    /// "race" (the default: the bike rides itself from the start), "title", "count" or "results".
     private var snapshotTimes: [Double] = (ProcessInfo.processInfo.environment["SNAPSHOT_AT"] ?? "")
         .split(separator: ",").compactMap { Double($0) }
-    private var demoInput: RiderInput? {
-        ProcessInfo.processInfo.environment["SNAPSHOT_AT"] == nil ? nil : RiderInput(gas: true, boost: false, lean: 0)
+    private var snapshotClock = 0.0
+    private var snapshotMode: String? {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["SNAPSHOT_AT"] == nil ? nil : environment["SNAPSHOT_MODE"] ?? "race"
     }
 
-    private func saveDueSnapshot() {
-        guard let due = snapshotTimes.first, race.time >= due, let view,
+    private func applySnapshotMode() {
+        switch snapshotMode {
+        case "race":
+            mode = .racing
+            menu.hide()
+            input.controlsVisible = true
+            hud.isHidden = false
+        case "count":
+            beginCountdown()
+        case "results":
+            // Start just before the line so the results panel comes up within seconds.
+            var bike = BikeState()
+            bike.x = race.terrain.finishX - 40
+            race = Race(track: GameScene.track, tuning: race.tuning, bike: bike, rivals: GameScene.rivalSkills.count)
+            mode = .racing
+            menu.hide()
+            hud.isHidden = false
+        default:
+            break
+        }
+    }
+
+    private func saveDueSnapshot(after elapsed: Double) {
+        snapshotClock += elapsed
+        guard let due = snapshotTimes.first, snapshotClock >= due, let view,
               let image = view.texture(from: self)?.cgImage() else { return }
         snapshotTimes.removeFirst()
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -235,6 +376,14 @@ final class GameScene: SKScene {
     // MARK: Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if mode == .title || mode == .results {
+            for touch in touches {
+                if let action = menu.action(at: touch.location(in: menu)) {
+                    perform(action)
+                    return
+                }
+            }
+        }
         input.touchesChanged(touches, in: overlay)
     }
 
@@ -259,7 +408,8 @@ final class GameScene: SKScene {
             node.update(with: bike, tuning: race.tuning, elapsed: elapsed)
         }
         hud.update(with: race, elapsed: elapsed)
-        sound.update(with: race.bike, input: lastInputs.first ?? RiderInput(), tuning: race.tuning, elapsed: elapsed)
+        sound.update(with: race.bike, input: lastInputs.first ?? RiderInput(), tuning: race.tuning,
+                     engineOn: mode != .title, elapsed: elapsed)
 
         let m = GameScene.pointsPerMetre
         let fractions = GameScene.bikeScreenFraction
@@ -315,6 +465,8 @@ final class GameScene: SKScene {
         visibleSize = CGSize(width: viewSize.width / scale, height: viewSize.height / scale)
         overlay.setScale(1 / scale)
         hud.layout(viewSize: viewSize, insets: insets, pixel: scale)
-        input.layout(viewSize: viewSize, insets: insets)
+        input.layout(viewSize: viewSize, insets: insets, pixel: scale)
+        menu.setScale(scale)
+        menu.layout(size: visibleSize)
     }
 }
