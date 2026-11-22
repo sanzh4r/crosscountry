@@ -28,7 +28,7 @@ final class GameScene: SKScene {
     /// Frame gaps longer than this (the view was paused or the app was in the background) count as zero.
     private static let maxFrameGap = 0.25
 
-    /// The tournament in progress, saved after every change. The race on screen is `cup.round`.
+    /// The tournament in progress, saved after every change.
     private var cup = GameScene.savedCup() {
         didSet { saveCup() }
     }
@@ -36,7 +36,17 @@ final class GameScene: SKScene {
     private static let cupsWonKey = "cupsWon.dune"
     private var cupsWon: Int {
         get { UserDefaults.standard.integer(forKey: GameScene.cupsWonKey) }
-        set { UserDefaults.standard.set(newValue, forKey: GameScene.cupsWonKey) }
+        set { if keepsRecords { UserDefaults.standard.set(newValue, forKey: GameScene.cupsWonKey) } }
+    }
+    /// Index of the track being ridden alone; nil in a cup race.
+    private var solo: Int?
+    /// The race on screen: the solo track, or the cup's current race.
+    private var round: Cup.Round { solo.map { Cup.rounds[$0] } ?? cup.round }
+    private var rivalCount: Int { solo == nil ? GameScene.rivalCount : 0 }
+    private static let unlockedKey = "unlockedTracks.dune"
+    /// How many tracks can be ridden solo: every one the cup has reached, for good.
+    private var unlockedTracks: Int {
+        min(max(UserDefaults.standard.integer(forKey: GameScene.unlockedKey), cup.current + 1), Cup.rounds.count)
     }
     /// The round whose track `terrainNode` draws.
     private var drawnRound = ""
@@ -72,7 +82,7 @@ final class GameScene: SKScene {
     /// Title, countdown and results; a child of the overlay scaled so one unit is one art pixel.
     private let menu = MenuNode()
 
-    private enum Mode { case title, countdown, racing, results, standings }
+    private enum Mode { case title, soloList, countdown, racing, results, standings }
     private var mode = Mode.title
     private let pauseButton = PauseButton()
     /// True while the player has the race stopped behind the pause panel.
@@ -93,8 +103,8 @@ final class GameScene: SKScene {
     private var beatBest = false
     /// The player's fastest finish on the current track, kept between launches.
     private var bestTime: Double? {
-        get { UserDefaults.standard.object(forKey: "bestTime.\(cup.round.id)") as? Double }
-        set { UserDefaults.standard.set(newValue, forKey: "bestTime.\(cup.round.id)") }
+        get { UserDefaults.standard.object(forKey: "bestTime.\(round.id)") as? Double }
+        set { if keepsRecords { UserDefaults.standard.set(newValue, forKey: "bestTime.\(round.id)") } }
     }
 
     private var laidOutViewSize = CGSize.zero
@@ -125,6 +135,7 @@ final class GameScene: SKScene {
         terrainNode = TerrainNode(track: round.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
         drawnRound = round.id
         super.init(size: GameScene.sceneSize)
+        if keepsRecords { UserDefaults.standard.set(unlockedTracks, forKey: GameScene.unlockedKey) }
         scaleMode = .aspectFill
         backgroundColor = Art.colour(ArtInfo.shared.sky)
 
@@ -165,8 +176,9 @@ final class GameScene: SKScene {
     /// Sets up a fresh race with `tuning` and resets the clock and the camera. From the title screen it
     /// waits there; otherwise the start countdown begins.
     func restart(with tuning: Tuning) {
-        let round = cup.round
-        race = Race(track: round.track, tuning: tuning, rivals: GameScene.rivalCount)
+        let round = self.round
+        race = Race(track: round.track, tuning: tuning, rivals: rivalCount)
+        hud.soloCaption = solo == nil ? "" : "BEAT \(HUDNode.format(time: round.targetTime))"
         if round.id != drawnRound {
             terrainNode.removeFromParent()
             terrainNode = TerrainNode(track: round.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
@@ -205,15 +217,34 @@ final class GameScene: SKScene {
     }
 
     private func saveCup() {
-        #if DEBUG
-        if snapshotMode != nil { return }
-        #endif
+        guard keepsRecords else { return }
         UserDefaults.standard.set(try? JSONEncoder().encode(cup), forKey: GameScene.cupKey)
+    }
+
+    /// False while taking debug snapshots, which ride made-up races that must not be saved.
+    private var keepsRecords: Bool {
+        #if DEBUG
+        return snapshotMode == nil
+        #else
+        return true
+        #endif
     }
 
     /// Every rider's place in the race on screen, the player first.
     private var places: [Int] { race.bikes.indices.map { race.position(of: $0) } }
-    private var raceCaption: String { "RACE \(cup.current + 1)/\(Cup.rounds.count) - \(cup.round.name)" }
+    private var raceCaption: String {
+        solo == nil ? "RACE \(cup.current + 1)/\(Cup.rounds.count) - \(round.name)" : "SOLO RUN - \(round.name)"
+    }
+
+    private func showSoloList() {
+        mode = .soloList
+        let open = unlockedTracks
+        menu.showSoloList(Cup.rounds.enumerated().map { i, round in
+            MenuNode.SoloRow(name: round.name, target: round.targetTime,
+                             best: UserDefaults.standard.object(forKey: "bestTime.\(round.id)") as? Double,
+                             unlocked: i < open)
+        })
+    }
 
     private func beginCountdown() {
         mode = .countdown
@@ -246,6 +277,10 @@ final class GameScene: SKScene {
     private func showResults() {
         mode = .results
         input.controlsVisible = false
+        if solo != nil {
+            menu.showResults(for: race, best: bestTime, newBest: beatBest, lastRace: false, target: round.targetTime)
+            return
+        }
         // Banked now so that it survives the app being closed; "next" banks the final order.
         cup.record(places)
         menu.showResults(for: race, best: bestTime, newBest: beatBest, lastRace: cup.current == Cup.rounds.count - 1)
@@ -253,10 +288,12 @@ final class GameScene: SKScene {
 
     /// Banks the race, moves the cup on and shows the table; after the last race the cup starts afresh.
     private func showStandings() {
+        guard solo == nil else { return }
         cup.record(places)
         guard cup.canAdvance else { return }
         let raceNumber = cup.current + 1
         cup.advance()
+        if keepsRecords { UserDefaults.standard.set(unlockedTracks, forKey: GameScene.unlockedKey) }
         mode = .standings
         menu.showStandings(cup, raceNumber: raceNumber, final: cup.isFinished)
         guard cup.isFinished else { return }
@@ -298,19 +335,25 @@ final class GameScene: SKScene {
             enterTitle()
         case .next:
             showStandings()
+        case .soloList:
+            showSoloList()
+        case .solo(let index):
+            solo = index
+            restart(with: race.tuning)
         case .nothing:
             break
         case .again, .continueCup:
             restart(with: race.tuning)
         case .title:
             mode = .title
+            solo = nil
             restart(with: race.tuning)
             enterTitle()
         }
     }
 
     private func seatRivals() {
-        rivals = cup.round.rivals.enumerated().map { i, skill in
+        rivals = round.rivals.prefix(rivalCount).enumerated().map { i, skill in
             Rival(skill: skill, seed: raceNumber &* 1000 &+ UInt64(i) &+ 1)
         }
     }
@@ -338,7 +381,7 @@ final class GameScene: SKScene {
 
         input.poll()
         menu.update(elapsed: elapsed)
-        if input.restartPressed, mode != .title {
+        if input.restartPressed, mode != .title, mode != .soloList {
             restart(with: race.tuning)
             return
         }
@@ -355,6 +398,8 @@ final class GameScene: SKScene {
         switch mode {
         case .title:
             if input.startPressed { beginCountdown() }
+            syncNodes(snapCamera: false, elapsed: elapsed)
+        case .soloList:
             syncNodes(snapCamera: false, elapsed: elapsed)
         case .countdown:
             advanceCountdown(by: elapsed)
@@ -423,7 +468,8 @@ final class GameScene: SKScene {
     private func playEvents(from before: BikeState, to after: BikeState) {
         if before.stallRemaining == 0, after.stallRemaining > 0 { sound.play(.stall) }
         if !before.finished, after.finished {
-            sound.raceFinished(won: race.position(of: 0) == 1)
+            // Brass for a win, or on a solo run for beating the target.
+            sound.raceFinished(won: solo == nil ? race.position(of: 0) == 1 : race.time <= round.targetTime)
             resultsDelay = GameScene.resultsPause
             beatBest = bestTime.map { race.time < $0 } ?? true
             if beatBest { bestTime = race.time }
@@ -467,6 +513,17 @@ final class GameScene: SKScene {
             hud.isHidden = false
         case "count":
             beginCountdown()
+        case "sololist":
+            showSoloList()
+        case "soloresults":
+            solo = 0
+            restart(with: race.tuning)
+            var bike = BikeState()
+            bike.x = race.terrain.finishX - 40
+            race = Race(track: round.track, tuning: race.tuning, bike: bike, rivals: 0)
+            mode = .racing
+            menu.hide()
+            hud.isHidden = false
         case "standings":
             cup.record([1, 3, 2, 4])
             showStandings()
@@ -477,7 +534,7 @@ final class GameScene: SKScene {
             // Start just before the line so the results panel comes up within seconds.
             var bike = BikeState()
             bike.x = race.terrain.finishX - 40
-            race = Race(track: cup.round.track, tuning: race.tuning, bike: bike, rivals: GameScene.rivalCount)
+            race = Race(track: round.track, tuning: race.tuning, bike: bike, rivals: GameScene.rivalCount)
             mode = .racing
             menu.hide()
             hud.isHidden = false
@@ -507,7 +564,7 @@ final class GameScene: SKScene {
             pause()
             return
         }
-        if mode == .title || mode == .results || mode == .standings || held {
+        if mode == .title || mode == .soloList || mode == .results || mode == .standings || held {
             for touch in touches {
                 if let action = menu.action(at: touch.location(in: menu)) {
                     perform(action)
@@ -535,13 +592,14 @@ final class GameScene: SKScene {
     /// Moves the bike, camera and HUD to the race state. `elapsed` is simulated seconds since the last sync.
     private func syncNodes(snapCamera: Bool, elapsed: Double) {
         bikeNode.update(with: race.bike, tuning: race.tuning, elapsed: elapsed)
+        for (i, node) in rivalNodes.enumerated() { node.isHidden = i + 1 >= race.bikes.count }
         for (node, bike) in zip(rivalNodes, race.bikes.dropFirst()) {
             node.update(with: bike, tuning: race.tuning, elapsed: elapsed)
         }
         hud.update(with: race, elapsed: elapsed)
         sound.update(with: race.bike, rivals: Array(race.bikes.dropFirst()), input: lastInputs.first ?? RiderInput(),
                      tuning: race.tuning,
-                     engineOn: mode != .title, elapsed: elapsed)
+                     engineOn: mode != .title && mode != .soloList, elapsed: elapsed)
 
         let m = GameScene.pointsPerMetre
         let fractions = GameScene.bikeScreenFraction

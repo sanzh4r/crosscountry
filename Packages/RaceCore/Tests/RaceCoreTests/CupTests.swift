@@ -28,6 +28,9 @@ struct CupTrackTests {
         print("cup track", name, track.lengthCells, "cells, gas only + rivals:", times.map { ($0 * 10).rounded() / 10 })
         let fastest = times.min() ?? 0, slowest = times.max() ?? .infinity
         #expect(fastest > 45); #expect(slowest < 130)
+        // The solo target asks for clearly more than holding the gas, but is not out of reach.
+        let target = Cup.rounds[index].targetTime
+        #expect(target < times[0] * 0.9); #expect(target > times[0] * 0.7); #expect(Cup.rounds[index].id == name)
     }
 }
 

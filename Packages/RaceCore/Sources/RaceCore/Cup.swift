@@ -8,6 +8,8 @@ public struct Cup: Codable, Equatable, Sendable {
         public let track: Track
         /// Skill of each rival in this race, in rider order.
         public let rivals: [Rival.Skill]
+        /// Seconds to beat on a solo run.
+        public let targetTime: Double
     }
 
     /// Points for 1st, 2nd, 3rd and 4th.
@@ -16,11 +18,14 @@ public struct Cup: Codable, Equatable, Sendable {
     public static let worstPlaceToGoOn = 3
     /// The five races, easiest first. The strong rival changes from race to race so the table stays open.
     public static let rounds: [Round] = [
-        Round(id: "sunsetMile", name: "SUNSET MILE", track: .sunsetMile, rivals: [.rookie, .steady, .rookie]),
-        Round(id: "rattleFlats", name: "RATTLE FLATS", track: .rattleFlats, rivals: [.steady, .rookie, .steady]),
-        Round(id: "duskRun", name: "DUSK RUN", track: .duskRun, rivals: [.rookie, .steady, .sharp]),
-        Round(id: "mesaSteps", name: "MESA STEPS", track: .mesaSteps, rivals: [.sharp, .steady, .steady]),
-        Round(id: "lastLight", name: "LAST LIGHT", track: .lastLight, rivals: [.steady, .sharp, .sharp]),
+        Round(id: "sunsetMile", name: "SUNSET MILE", track: .sunsetMile, rivals: [.rookie, .steady, .rookie],
+              targetTime: 52),
+        Round(id: "rattleFlats", name: "RATTLE FLATS", track: .rattleFlats, rivals: [.steady, .rookie, .steady],
+              targetTime: 57),
+        Round(id: "duskRun", name: "DUSK RUN", track: .duskRun, rivals: [.rookie, .steady, .sharp], targetTime: 75),
+        Round(id: "mesaSteps", name: "MESA STEPS", track: .mesaSteps, rivals: [.sharp, .steady, .steady],
+              targetTime: 71),
+        Round(id: "lastLight", name: "LAST LIGHT", track: .lastLight, rivals: [.steady, .sharp, .sharp], targetTime: 80),
     ]
 
     /// Index of the race being ridden; `rounds.count` once the cup is over.

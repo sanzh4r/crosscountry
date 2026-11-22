@@ -227,7 +227,14 @@ final class SoundPlayer {
     private func updateRivals(_ rivals: [BikeState], around bike: BikeState, tuning: Tuning, on: Bool, follow: Float) {
         guard engineLoop != nil else { return }
         let rates = SoundPlayer.engineRate
-        for (i, rival) in rivals.prefix(rivalPlayers.count).enumerated() {
+        for i in rivalPlayers.indices {
+            guard i < rivals.count else {
+                // No such rider in this race (a solo run).
+                rivalLevels[i] = 0
+                rivalPlayers[i].volume = 0
+                continue
+            }
+            let rival = rivals[i]
             var down = rival.stallRemaining > 0
             if case .crashed = rival.phase { down = true }
             let away = rival.x - bike.x

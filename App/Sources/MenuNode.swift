@@ -1,13 +1,15 @@
 import RaceCore
 import SpriteKit
 
-/// Everything shown around a race: the title screen, the start countdown, the pause panel, the
-/// results panel and the cup standings. One unit is one art pixel and the origin is the centre of
+/// Everything shown around a race: the title screen, the solo track list, the start countdown, the
+/// pause panel, the results panel and the cup standings. One unit is one art pixel and the origin is the centre of
 /// the view.
 @MainActor
 final class MenuNode: SKNode {
     enum Action {
         case start, toggleSound, newCup, resume, again, title
+        /// Open the solo track list; ride track `index` alone.
+        case soloList, solo(Int)
         /// From the results: bank the result and show the standings. From the standings: ride the next race.
         case next, continueCup
         /// The tap was used up by the menu itself.
@@ -25,12 +27,21 @@ final class MenuNode: SKNode {
         var soundOn: Bool
     }
 
+    /// One line of the solo track list.
+    struct SoloRow {
+        var name: String
+        var target: Double
+        var best: Double?
+        var unlocked: Bool
+    }
+
     private static let placeNames = ["1ST", "2ND", "3RD", "4TH"]
     static let riderNames = ["YOU", "CRIMSON", "VIOLET", "GREEN"]
     /// Centre of the panels above the middle of the view, and the results panel's size.
     private static let panelCentreY: CGFloat = -18
     private static let panelSize = (width: 300, height: 190)
     private static let standingsSize = (width: 260, height: 190)
+    private static let soloSize = (width: 340, height: 190)
     /// "Tap to race" blinks this many times a second.
     private static let blinkRate = 1.6
 
@@ -60,6 +71,7 @@ final class MenuNode: SKNode {
     private let bestOnTitle: PixelLabel
     private let soundLabel: PixelLabel
     private let newCupLabel: PixelLabel
+    private var soloButton: Button?
     /// True after one tap on "new cup"; a second tap there resets the cup.
     private var newCupArmed = false
 
@@ -73,6 +85,18 @@ final class MenuNode: SKNode {
     private var rowTimes: [PixelLabel] = []
     private var rowPoints: [PixelLabel] = []
     private var resultButtons: [Button] = []
+    /// The rival rows of the results, hidden on a solo run, and the line that replaces them.
+    private var rivalRowNodes: [SKNode] = []
+    private let soloResultLine: PixelLabel
+
+    private let soloGroup = SKNode()
+    private var soloChips: [SKSpriteNode] = []
+    private var soloNames: [PixelLabel] = []
+    private var soloTargets: [PixelLabel] = []
+    private var soloBests: [PixelLabel] = []
+    private var soloRowsOpen: [Bool] = []
+    private var soloButtons: [Button] = []
+    private static let soloRowY: (first: CGFloat, step: CGFloat) = (36, 20)
 
     private let standingsGroup = SKNode()
     private let standingsCaption: PixelLabel
@@ -101,6 +125,7 @@ final class MenuNode: SKNode {
         timeLabel = PixelLabel(colour: p.sand, magnify: 2)
         bestLabel = PixelLabel(colour: p.orange, magnify: 2)
         standingsCaption = PixelLabel(colour: p.orange, magnify: 2)
+        soloResultLine = PixelLabel(colour: p.sand, magnify: 2)
         super.init()
 
         dim.color = Art.colour(p.dark)
@@ -112,9 +137,12 @@ final class MenuNode: SKNode {
         logo.position = CGPoint(x: 0, y: 62)
         cupLine.position = CGPoint(x: 0, y: 22)
         trackLine.position = CGPoint(x: 0, y: 0)
-        prompt.position = CGPoint(x: 0, y: -36)
-        bestOnTitle.position = CGPoint(x: 0, y: -64)
+        prompt.position = CGPoint(x: 0, y: -30)
+        bestOnTitle.position = CGPoint(x: 0, y: -52)
         for node in [logo, cupLine, trackLine, prompt, bestOnTitle, soundLabel, newCupLabel] { titleGroup.addChild(node) }
+        var solo = addButton(to: titleGroup, x: 0, y: -82, width: 112)
+        solo.set("SOLO RUN", .soloList)
+        soloButton = solo
         addChild(titleGroup)
 
         countLabel.position = CGPoint(x: 0, y: 24)
@@ -126,6 +154,8 @@ final class MenuNode: SKNode {
         addChild(resultsGroup)
         buildStandings()
         addChild(standingsGroup)
+        buildSolo()
+        addChild(soloGroup)
         buildPause()
         pauseGroup.zPosition = 3
         addChild(pauseGroup)
@@ -160,10 +190,15 @@ final class MenuNode: SKNode {
             for node in [chip, label, time, points] as [SKNode] {
                 node.zPosition = 1
                 resultsGroup.addChild(node)
+                if i > 0 { rivalRowNodes.append(node) }
             }
+            if i == 0 { rivalRowNodes.append(points) }
             rowTimes.append(time)
             rowPoints.append(points)
         }
+        soloResultLine.position = CGPoint(x: 0, y: -22)
+        soloResultLine.zPosition = 1
+        resultsGroup.addChild(soloResultLine)
         resultButtons = [addButton(to: resultsGroup, x: -58, y: -72, width: 132),
                          addButton(to: resultsGroup, x: 82, y: -72, width: 76)]
     }
@@ -200,6 +235,46 @@ final class MenuNode: SKNode {
         }
         standingsButtons = [addButton(to: standingsGroup, x: -48, y: -72, width: 112),
                             addButton(to: standingsGroup, x: 72, y: -72, width: 76)]
+    }
+
+    private func buildSolo() {
+        let p = palette
+        let size = MenuNode.soloSize
+        soloGroup.position = CGPoint(x: 0, y: MenuNode.panelCentreY)
+        addPanel(to: soloGroup, width: size.width, height: size.height)
+        let heading = PixelLabel("SOLO RUN", colour: p.cream, shadow: p.dark, magnify: 3)
+        heading.position = CGPoint(x: -90, y: 72)
+        let targetHead = PixelLabel("TARGET", colour: p.orange, magnify: 2, alignment: .right)
+        targetHead.position = CGPoint(x: 76, y: 58)
+        let bestHead = PixelLabel("BEST", colour: p.orange, magnify: 2, alignment: .right)
+        bestHead.position = CGPoint(x: 160, y: 58)
+        for node in [heading, targetHead, bestHead] {
+            node.zPosition = 1
+            soloGroup.addChild(node)
+        }
+        for i in 0..<Cup.rounds.count {
+            let y = MenuNode.soloRowY.first - CGFloat(i) * MenuNode.soloRowY.step
+            // The chip shows on a track whose target has been beaten.
+            let chip = SKSpriteNode(color: Art.colour(p.orange), size: CGSize(width: 6, height: 6))
+            chip.position = CGPoint(x: -159, y: y)
+            let name = PixelLabel(colour: p.cream, magnify: 2, alignment: .left)
+            name.position = CGPoint(x: -150, y: y)
+            let target = PixelLabel(colour: p.sand, magnify: 2, alignment: .right)
+            target.position = CGPoint(x: 76, y: y)
+            let best = PixelLabel(colour: p.cream, magnify: 2, alignment: .right)
+            best.position = CGPoint(x: 160, y: y)
+            for node in [chip, name, target, best] as [SKNode] {
+                node.zPosition = 1
+                soloGroup.addChild(node)
+            }
+            soloChips.append(chip)
+            soloNames.append(name)
+            soloTargets.append(target)
+            soloBests.append(best)
+        }
+        var back = addButton(to: soloGroup, x: 0, y: -74, width: 76)
+        back.set("BACK", .title)
+        soloButtons = [back]
     }
 
     private func buildPause() {
@@ -267,7 +342,22 @@ final class MenuNode: SKNode {
         countCaption.isHidden = true
         resultsGroup.isHidden = true
         standingsGroup.isHidden = true
+        soloGroup.isHidden = true
         pauseGroup.isHidden = true
+    }
+
+    /// The list of tracks to ride alone; a locked track shows no name and cannot be picked.
+    func showSoloList(_ rows: [SoloRow]) {
+        hide()
+        dim.isHidden = false
+        soloGroup.isHidden = false
+        soloRowsOpen = rows.map(\.unlocked)
+        for (i, row) in rows.enumerated() where i < soloNames.count {
+            soloNames[i].text = row.unlocked ? row.name : "LOCKED"
+            soloTargets[i].text = row.unlocked ? HUDNode.format(time: row.target) : ""
+            soloBests[i].text = row.unlocked ? row.best.map { HUDNode.format(time: $0) } ?? "-" : ""
+            soloChips[i].isHidden = !(row.unlocked && (row.best ?? .infinity) <= row.target)
+        }
     }
 
     func showTitle(_ info: TitleInfo) {
@@ -296,14 +386,25 @@ final class MenuNode: SKNode {
         countCaption.text = caption ?? ""
     }
 
-    /// `lastRace` is true for the cup's final race.
-    func showResults(for race: Race, best: Double?, newBest: Bool, lastRace: Bool) {
+    /// `lastRace` is true for the cup's final race. On a solo run `target` is the time to beat.
+    func showResults(for race: Race, best: Double?, newBest: Bool, lastRace: Bool, target: Double? = nil) {
         hide()
         dim.isHidden = false
         resultsGroup.isHidden = false
         let place = race.position(of: 0)
-        placeLabel.text = "\(MenuNode.placeNames[min(place, 4) - 1]) PLACE"
         timeLabel.text = "TIME \(HUDNode.format(time: race.time))"
+        for node in rivalRowNodes { node.isHidden = target != nil }
+        soloResultLine.isHidden = target == nil
+        if let target {
+            placeLabel.text = race.time <= target ? "TARGET BEAT!" : "TOO SLOW"
+            soloResultLine.text = "TARGET \(HUDNode.format(time: target))"
+            bestLabel.text = newBest ? "NEW BEST!" : best.map { "BEST \(HUDNode.format(time: $0))" } ?? ""
+            resultButtons[0].set("RETRY", .again)
+            resultButtons[1].set("MENU", .title)
+            updateResults(for: race)
+            return
+        }
+        placeLabel.text = "\(MenuNode.placeNames[min(place, 4) - 1]) PLACE"
         if place > Cup.worstPlaceToGoOn {
             bestLabel.text = "TOP \(Cup.worstPlaceToGoOn) TO GO ON"
             resultButtons[0].set("RETRY", .again)
@@ -382,6 +483,7 @@ final class MenuNode: SKNode {
                 !label.isHidden && abs(point.x - label.position.x) < 70 && abs(point.y - label.position.y) < 18
             }
             if near(soundLabel) { return .toggleSound }
+            if let soloButton, soloButton.frame.insetBy(dx: -8, dy: -8).contains(point) { return soloButton.action }
             if near(newCupLabel) {
                 if newCupArmed { return .newCup }
                 newCupArmed = true
@@ -392,6 +494,15 @@ final class MenuNode: SKNode {
         }
         if !resultsGroup.isHidden { return pressed(resultButtons, in: resultsGroup, slack: 8) }
         if !standingsGroup.isHidden { return pressed(standingsButtons, in: standingsGroup, slack: 8) }
+        if !soloGroup.isHidden {
+            let local = CGPoint(x: point.x - soloGroup.position.x, y: point.y - soloGroup.position.y)
+            let rows = MenuNode.soloRowY
+            let row = Int(((rows.first + rows.step / 2 - local.y) / rows.step).rounded(.down))
+            if abs(local.x) < CGFloat(MenuNode.soloSize.width) / 2, soloRowsOpen.indices.contains(row) {
+                return soloRowsOpen[row] ? .solo(row) : .nothing
+            }
+            return pressed(soloButtons, in: soloGroup, slack: 8) ?? .nothing
+        }
         return nil
     }
 }

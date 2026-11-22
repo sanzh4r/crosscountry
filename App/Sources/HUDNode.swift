@@ -3,7 +3,7 @@ import SpriteKit
 import UIKit
 
 /// The dashboard (speed and engine heat), a strip showing every rider's progress along the track,
-/// race time as `0:00.0` and place in the race as `2/4`.
+/// race time as `0:00.0` and place in the race as `2/4` (on a solo run, the time to beat).
 /// Laid out in screen points (its parent is scaled so one unit is one view point).
 @MainActor
 final class HUDNode: SKNode {
@@ -15,6 +15,8 @@ final class HUDNode: SKNode {
     private let positionLabel = PixelLabel(colour: Palette.shared.sand, shadow: Palette.shared.dark, magnify: 2,
                                            alignment: .left)
     private let dashboard = DashboardNode()
+    /// Shown in place of the position when the player rides alone.
+    var soloCaption = ""
 
     /// Progress strip under the dashboard, in art pixels: a track line, a finish post, and one marker
     /// per rider in that rider's suit colour (the player's is larger and drawn on top).
@@ -60,8 +62,7 @@ final class HUDNode: SKNode {
     func update(with race: Race, elapsed: Double) {
         timeLabel.text = HUDNode.format(time: race.time)
         dashboard.update(with: race.bike, elapsed: elapsed)
-        positionLabel.text = "\(race.position(of: 0))/\(race.bikes.count)"
-        positionLabel.isHidden = race.bikes.count < 2
+        positionLabel.text = race.bikes.count < 2 ? soloCaption : "\(race.position(of: 0))/\(race.bikes.count)"
 
         while markers.count < race.bikes.count {
             let own = markers.isEmpty
@@ -71,6 +72,7 @@ final class HUDNode: SKNode {
             strip.addChild(marker)
             markers.append(marker)
         }
+        for (i, marker) in markers.enumerated() { marker.isHidden = i >= race.bikes.count }
         for (marker, bike) in zip(markers, race.bikes) {
             let done = min(max(bike.x / race.terrain.finishX, 0), 1)
             marker.position = CGPoint(x: (CGFloat(done) - 0.5) * HUDNode.stripWidth, y: 0)
