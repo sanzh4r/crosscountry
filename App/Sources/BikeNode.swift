@@ -19,6 +19,9 @@ final class BikeNode: SKNode {
     private static let standSpeed = 0.3
     private static let standFrameRate = 10.0
     private static let stalledTint = SKColor(white: 0.1, alpha: 1)
+    /// Scene points from the node's origin back to where the rear tyre meets the ground; a wheelie
+    /// turns the sprite about that point.
+    static let rearWheelOffset: CGFloat = 20
 
     private let pointsPerMetre: CGFloat
     private let frames: [SKTexture]
@@ -61,13 +64,16 @@ final class BikeNode: SKNode {
         zRotation = bike.angle
         sprite.colorBlendFactor = 0
         sprite.alpha = 1
-        sprite.zRotation = 0
-        sprite.position.y = restY
+        // On the rear wheel: turn the sprite about the rear tyre's contact point.
+        let lift = CGFloat(bike.wheelie), rear = BikeNode.rearWheelOffset
+        sprite.zRotation = lift
+        sprite.position = CGPoint(x: rear * (cos(lift) - 1) - restY * sin(lift), y: rear * sin(lift) + restY * cos(lift))
 
         if case .crashed(let remaining) = bike.phase {
             let progress = 1 - remaining / max(tuning.crashDuration, 0.01)
             let tumble = min(progress / BikeNode.tumbleShare, 1)
             let eased = 1 - (1 - tumble) * (1 - tumble)
+            sprite.position.x = 0
             sprite.zRotation = -2 * .pi * BikeNode.tumbleTurns * eased
             sprite.position.y = restY + BikeNode.tumbleHop * abs(sin(.pi * 2 * eased)) * (1 - eased * 0.6)
             if tumble >= 1 {

@@ -1,6 +1,6 @@
 public struct RiderInput: Equatable, Sendable {
     public var gas = false, boost = false
-    public var lean = 0.0                     // -1 lean back (nose up) ... +1 lean forward (nose down); clamped on use
+    public var lean = 0.0                     // -1 lean back (nose up; on the ground, a wheelie) ... +1 lean forward; clamped on use
 
     /// -1 one lane toward the far side, +1 toward the near side, 0 stay.
     public var laneChange = 0

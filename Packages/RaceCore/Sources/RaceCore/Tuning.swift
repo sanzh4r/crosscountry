@@ -22,6 +22,12 @@ public struct Tuning: Codable, Equatable, Sendable {
     public var mudTopSpeed = 9.0
     public var mudDecel = 40.0
     public var boostPadSpeed = 32.0
+    public var wheelieRate = 1.0              // rad/s the front wheel rises while leaning back with gas
+    public var wheelieDropRate = 3.0          // rad/s it falls when let go
+    public var wheeliePushDownRate = 6.0      // rad/s it falls when leaning forward
+    public var wheelieFlipAngle = 1.15        // lifted this far, the bike goes over backwards
+    public var wheelieFloatAngle = 0.3        // lifted at least this far, mud does not slow the bike
+    public var wheelieMinSpeed = 3.0          // slower than this the front wheel will not come up
 
     public init() {}
 }

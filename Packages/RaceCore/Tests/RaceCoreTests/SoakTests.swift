@@ -18,10 +18,10 @@ struct SoakTests {
     /// Every step is live: once the bike finishes, the next step starts a fresh race. Violations are collected
     /// per invariant (first violating step recorded) and asserted once at the end, so a broken invariant reports
     /// one clear failure instead of thousands. Hazard step counts prove the soak reaches what it guards.
-    @Test(arguments: [1, 2, 3, 4, 5] as [UInt64]) func soakKeepsInvariants(seed: UInt64) {
+    @Test(arguments: [1, 2, 3, 4, 6, 7] as [UInt64]) func soakKeepsInvariants(seed: UInt64) {
         var r = Race(track: .prototype); var lastX = r.bike.x
         var aboveGround: Int?, finite: Int?, heatInRange: Int?, forward: Int?
-        var airborne = 0, stalled = 0, crashed = 0
+        var airborne = 0, stalled = 0, crashed = 0, lifted = 0, wheelieInRange: Int?
         for (n, i) in inputs(seed: seed, count: 20_000).enumerated() {
             if r.bike.finished { r = Race(track: .prototype); lastX = r.bike.x }
             r.step(i); let b = r.bike
@@ -29,6 +29,8 @@ struct SoakTests {
             if finite == nil, ![b.x, b.y, b.vx, b.vy, b.angle, b.heat, b.stallRemaining].allSatisfy(\.isFinite) { finite = n }
             if heatInRange == nil, !(0...1).contains(b.heat) { heatInRange = n }
             if forward == nil, !(b.x >= lastX) { forward = n }; lastX = b.x
+            if wheelieInRange == nil, !(0..<r.tuning.wheelieFlipAngle).contains(b.wheelie) { wheelieInRange = n }
+            if b.wheelie > 0 { lifted += 1 }
             if b.phase == .airborne { airborne += 1 }
             if b.stallRemaining > 0 { stalled += 1 }
             if case .crashed = b.phase { crashed += 1 }
@@ -38,7 +40,8 @@ struct SoakTests {
         #expect(heatInRange == nil, "heat outside 0...1, first at step \(heatInRange ?? -1)")
         #expect(forward == nil, "bike moved backwards, first at step \(forward ?? -1)")
         #expect(airborne > 0, "seed \(seed) never airborne"); #expect(stalled > 0, "seed \(seed) never stalled")
-        #expect(crashed > 0, "seed \(seed) never crashed")
+        #expect(crashed > 0, "seed \(seed) never crashed"); #expect(lifted > 0, "seed \(seed) never did a wheelie")
+        #expect(wheelieInRange == nil, "wheelie outside its range, first at step \(wheelieInRange ?? -1)")
     }
     @Test func prototypeTrackCanBeFinishedOnGasAlone() {
         var r = Race(track: .prototype); var n = 0

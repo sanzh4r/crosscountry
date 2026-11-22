@@ -5,6 +5,8 @@ public enum BikePhase: Equatable, Sendable { case grounded, airborne, crashed(re
 public struct BikeState: Equatable, Sendable {
     public var x = 0.0, y = 0.0, vx = 0.0, vy = 0.0
     public var angle = 0.0                    // radians, positive = nose up
+    /// Radians the front wheel is lifted above the slope while riding on the rear wheel; 0 in the air.
+    public var wheelie = 0.0
     public var heat = 0.0                     // 0...1
     public var stallRemaining = 0.0           // seconds; > 0 means engine cut out
     public var phase = BikePhase.grounded

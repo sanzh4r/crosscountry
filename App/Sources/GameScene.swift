@@ -310,6 +310,7 @@ final class GameScene: SKScene {
     private func riderInput() -> RiderInput {
         #if DEBUG
         if snapshotMode != nil {
+            if snapshotMode == "wheelie" { return RiderInput(gas: true, lean: race.bike.wheelie < 0.6 ? -1 : 0) }
             return RiderInput(gas: true, boost: race.time < 2.2 || (race.time > 4 && race.time < 6.5), lean: 0)
         }
         #endif
@@ -326,10 +327,13 @@ final class GameScene: SKScene {
         playEvents(from: before[0], to: race.bikes[0])
         let m = GameScene.pointsPerMetre
         for (i, after) in race.bikes.enumerated() {
-            guard before[i].phase == .airborne, after.phase != .airborne else { continue }
-            var crashed = false
+            var crashed = false, wasCrashed = false
             if case .crashed = after.phase { crashed = true }
-            let impact = -before[i].vy
+            if case .crashed = before[i].phase { wasCrashed = true }
+            // A landing, or a bike that went over backwards out of a wheelie.
+            let flipped = crashed && !wasCrashed && before[i].phase == .grounded
+            guard flipped || (before[i].phase == .airborne && after.phase != .airborne) else { continue }
+            let impact = flipped ? 0 : -before[i].vy
             guard crashed || impact > GameScene.minImpact else { continue }
             effects[i].landing(at: CGPoint(x: after.x * m, y: after.y * m + BikeNode.laneRise(after.lane)),
                                impact: impact, crashed: crashed)
@@ -381,7 +385,7 @@ final class GameScene: SKScene {
 
     private func applySnapshotMode() {
         switch snapshotMode {
-        case "race":
+        case "race", "wheelie":
             mode = .racing
             menu.hide()
             input.controlsVisible = true
@@ -488,7 +492,8 @@ final class GameScene: SKScene {
         for (i, bike) in race.bikes.enumerated() {
             let angle = CGFloat(bike.angle)
             let base = CGPoint(x: bike.x * m, y: bike.y * m + BikeNode.laneRise(bike.lane))
-            let rear = CGPoint(x: base.x - 20 * cos(angle), y: base.y - 20 * sin(angle) + 1)
+            let rear = CGPoint(x: base.x - BikeNode.rearWheelOffset * cos(angle),
+                               y: base.y - BikeNode.rearWheelOffset * sin(angle) + 1)
             let exhaust = CGPoint(x: rear.x - 10 * cos(angle) - 13 * sin(angle),
                                   y: rear.y - 10 * sin(angle) + 13 * cos(angle))
             effects[i].ride(bike: bike, rearWheel: rear, exhaust: exhaust,

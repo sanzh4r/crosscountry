@@ -90,7 +90,7 @@ public struct Race: Sendable {
         let boosting = running && input.boost
         let gas = running && (input.gas || input.boost)
         switch bike.phase {
-        case .grounded: stepGrounded(&bike, gas: gas, boost: boosting)
+        case .grounded: stepGrounded(&bike, gas: gas, boost: boosting, lean: input.lean)
         case .airborne: stepAirborne(&bike, lean: input.lean)
         case .crashed(let remaining): stepCrashed(&bike, remaining: remaining)
         }
@@ -151,11 +151,14 @@ public struct Race: Sendable {
 
     // MARK: Grounded riding
 
-    private func stepGrounded(_ bike: inout BikeState, gas: Bool, boost: Bool) {
+    private func stepGrounded(_ bike: inout BikeState, gas: Bool, boost: Bool, lean: Double) {
+        guard stepWheelie(&bike, gas: gas, lean: lean) else { return }
         let slope = terrain.slope(at: bike.x)
         var speed = bike.speed
         speed = throttled(speed, gas: gas, boost: boost)
+        let floating = bike.wheelie >= tuning.wheelieFloatAngle
         switch surface(at: bike.x, lane: Int(bike.lane.rounded())) {
+        case .mud where floating: break
         case .mud: if speed > tuning.mudTopSpeed { speed = max(tuning.mudTopSpeed, speed - tuning.mudDecel * Race.dt) }
         case .boostPad: speed = max(speed, tuning.boostPadSpeed)
         default: break
@@ -173,11 +176,32 @@ public struct Race: Sendable {
             bike.y = y
             bike.vx = vx
             bike.vy = vy - tuning.gravity * dt
+            // A bike that leaves the ground on its rear wheel flies nose-up.
+            bike.angle += bike.wheelie
+            bike.wheelie = 0
             bike.phase = .airborne
             return
         }
         bike.x = x
         Race.snapToTerrain(&bike, terrain: terrain, speed: speed)
+    }
+
+    /// Riding on the rear wheel: leaning back under power lifts the front, anything else lets it
+    /// fall. Returns false when the bike went over backwards and crashed.
+    private func stepWheelie(_ bike: inout BikeState, gas: Bool, lean: Double) -> Bool {
+        let pull = max(-min(max(lean, -1), 1), 0)
+        if pull > 0, gas, bike.speed >= tuning.wheelieMinSpeed {
+            bike.wheelie += pull * tuning.wheelieRate * Race.dt
+        } else {
+            let rate = lean > 0 ? tuning.wheeliePushDownRate : tuning.wheelieDropRate
+            bike.wheelie = max(0, bike.wheelie - rate * Race.dt)
+        }
+        guard bike.wheelie >= tuning.wheelieFlipAngle else { return true }
+        bike.wheelie = 0
+        bike.vx = 0
+        bike.vy = 0
+        bike.phase = .crashed(remaining: tuning.crashDuration)
+        return false
     }
 
     // MARK: Airborne and landing
