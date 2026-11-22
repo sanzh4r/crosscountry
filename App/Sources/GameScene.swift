@@ -28,27 +28,37 @@ final class GameScene: SKScene {
     /// Frame gaps longer than this (the view was paused or the app was in the background) count as zero.
     private static let maxFrameGap = 0.25
 
-    /// The track being raced.
-    private static let track = Track.duskRun
+    /// The tournament in progress, saved after every change. The race on screen is `cup.round`.
+    private var cup = GameScene.savedCup() {
+        didSet { saveCup() }
+    }
+    private static let cupKey = "cup.dune"
+    private static let cupsWonKey = "cupsWon.dune"
+    private var cupsWon: Int {
+        get { UserDefaults.standard.integer(forKey: GameScene.cupsWonKey) }
+        set { UserDefaults.standard.set(newValue, forKey: GameScene.cupsWonKey) }
+    }
+    /// The round whose track `terrainNode` draws.
+    private var drawnRound = ""
 
     private var race: Race
     private var clock = FixedStepClock()
     private var lastUpdateTime: TimeInterval?
     private var lastFrameGap = 0.0
 
-    private let terrainNode: TerrainNode
+    private var terrainNode: TerrainNode
     private let background = BackgroundNode()
     /// Dust, flame and smoke for each bike in `race.bikes`, the player first.
-    private let effects = (0...GameScene.rivalSkills.count).map { _ in EffectsNode() }
+    private let effects = (0...GameScene.rivalCount).map { _ in EffectsNode() }
     /// Current screen-shake strength in scene points; dies away quickly.
     private var shake: CGFloat = 0
     /// What each bike was asked to do on the latest step.
     private var lastInputs: [RiderInput] = []
     private let bikeNode = BikeNode(pointsPerMetre: GameScene.pointsPerMetre)
     /// Computer riders for `race.bikes[1...]`, and their sprites.
-    private static let rivalSkills: [Rival.Skill] = [.rookie, .steady, .sharp]
+    private static let rivalCount = 3
     private var rivals: [Rival] = []
-    private let rivalNodes: [BikeNode] = (1...GameScene.rivalSkills.count).map {
+    private let rivalNodes: [BikeNode] = (1...GameScene.rivalCount).map {
         BikeNode(pointsPerMetre: GameScene.pointsPerMetre, style: $0)
     }
     /// Changes on every restart so the rivals do not ride the same race twice.
@@ -62,7 +72,7 @@ final class GameScene: SKScene {
     /// Title, countdown and results; a child of the overlay scaled so one unit is one art pixel.
     private let menu = MenuNode()
 
-    private enum Mode { case title, countdown, racing, results }
+    private enum Mode { case title, countdown, racing, results, standings }
     private var mode = Mode.title
     private let pauseButton = PauseButton()
     /// True while the player has the race stopped behind the pause panel.
@@ -81,11 +91,10 @@ final class GameScene: SKScene {
     private var goRemaining = 0.0
     private var resultsDelay = 0.0
     private var beatBest = false
-    private static let bestTimeKey = "bestTime.duskRun"
-    /// The player's fastest finish on this track, kept between launches.
+    /// The player's fastest finish on the current track, kept between launches.
     private var bestTime: Double? {
-        get { UserDefaults.standard.object(forKey: GameScene.bestTimeKey) as? Double }
-        set { UserDefaults.standard.set(newValue, forKey: GameScene.bestTimeKey) }
+        get { UserDefaults.standard.object(forKey: "bestTime.\(cup.round.id)") as? Double }
+        set { UserDefaults.standard.set(newValue, forKey: "bestTime.\(cup.round.id)") }
     }
 
     private var laidOutViewSize = CGSize.zero
@@ -100,8 +109,21 @@ final class GameScene: SKScene {
     var tuning: Tuning { race.tuning }
 
     override init() {
-        race = Race(track: GameScene.track, tuning: Tuning(), rivals: GameScene.rivalSkills.count)
-        terrainNode = TerrainNode(track: GameScene.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
+        #if DEBUG
+        if let skip = Int(ProcessInfo.processInfo.environment["SNAPSHOT_RACE"] ?? "") {
+            // Snapshots can start at a later race, with made-up results for the earlier ones.
+            var staged = Cup()
+            for i in 0..<skip {
+                staged.record([[2, 1, 3, 4], [1, 3, 4, 2], [3, 2, 1, 4], [1, 4, 2, 3]][i % 4])
+                staged.advance()
+            }
+            cup = staged
+        }
+        #endif
+        let round = cup.round
+        race = Race(track: round.track, tuning: Tuning(), rivals: GameScene.rivalCount)
+        terrainNode = TerrainNode(track: round.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
+        drawnRound = round.id
         super.init(size: GameScene.sceneSize)
         scaleMode = .aspectFill
         backgroundColor = Art.colour(ArtInfo.shared.sky)
@@ -143,7 +165,15 @@ final class GameScene: SKScene {
     /// Sets up a fresh race with `tuning` and resets the clock and the camera. From the title screen it
     /// waits there; otherwise the start countdown begins.
     func restart(with tuning: Tuning) {
-        race = Race(track: GameScene.track, tuning: tuning, rivals: GameScene.rivalSkills.count)
+        let round = cup.round
+        race = Race(track: round.track, tuning: tuning, rivals: GameScene.rivalCount)
+        if round.id != drawnRound {
+            terrainNode.removeFromParent()
+            terrainNode = TerrainNode(track: round.track, terrain: race.terrain, pointsPerMetre: GameScene.pointsPerMetre)
+            terrainNode.zPosition = 0
+            addChild(terrainNode)
+            drawnRound = round.id
+        }
         raceNumber += 1
         seatRivals()
         clock = FixedStepClock()
@@ -163,8 +193,27 @@ final class GameScene: SKScene {
         mode = .title
         input.controlsVisible = false
         hud.isHidden = true
-        menu.showTitle(best: bestTime, soundOn: sound.isOn)
+        menu.showTitle(MenuNode.TitleInfo(raceNumber: cup.current + 1, trackName: cup.round.name, best: bestTime,
+                                          cupsWon: cupsWon, cupUnderWay: cup.current > 0 || !cup.places.isEmpty,
+                                          soundOn: sound.isOn))
     }
+
+    private static func savedCup() -> Cup {
+        guard let data = UserDefaults.standard.data(forKey: GameScene.cupKey),
+              let cup = try? JSONDecoder().decode(Cup.self, from: data), !cup.isFinished else { return Cup() }
+        return cup
+    }
+
+    private func saveCup() {
+        #if DEBUG
+        if snapshotMode != nil { return }
+        #endif
+        UserDefaults.standard.set(try? JSONEncoder().encode(cup), forKey: GameScene.cupKey)
+    }
+
+    /// Every rider's place in the race on screen, the player first.
+    private var places: [Int] { race.bikes.indices.map { race.position(of: $0) } }
+    private var raceCaption: String { "RACE \(cup.current + 1)/\(Cup.rounds.count) - \(cup.round.name)" }
 
     private func beginCountdown() {
         mode = .countdown
@@ -172,7 +221,7 @@ final class GameScene: SKScene {
         goRemaining = 0
         input.controlsVisible = true
         hud.isHidden = false
-        menu.showCountdown("3")
+        menu.showCountdown("3", caption: raceCaption)
         sound.play(.count)
     }
 
@@ -188,7 +237,7 @@ final class GameScene: SKScene {
         } else {
             let now = Int((countdown / GameScene.countdownStep).rounded(.up))
             if now != shown {
-                menu.showCountdown("\(now)")
+                menu.showCountdown("\(now)", caption: raceCaption)
                 sound.play(.count)
             }
         }
@@ -197,7 +246,25 @@ final class GameScene: SKScene {
     private func showResults() {
         mode = .results
         input.controlsVisible = false
-        menu.showResults(for: race, best: bestTime, newBest: beatBest)
+        // Banked now so that it survives the app being closed; "next" banks the final order.
+        cup.record(places)
+        menu.showResults(for: race, best: bestTime, newBest: beatBest, lastRace: cup.current == Cup.rounds.count - 1)
+    }
+
+    /// Banks the race, moves the cup on and shows the table; after the last race the cup starts afresh.
+    private func showStandings() {
+        cup.record(places)
+        guard cup.canAdvance else { return }
+        let raceNumber = cup.current + 1
+        cup.advance()
+        mode = .standings
+        menu.showStandings(cup, raceNumber: raceNumber, final: cup.isFinished)
+        guard cup.isFinished else { return }
+        if cup.standings[0] == 0 {
+            cupsWon += 1
+            sound.raceFinished(won: true)
+        }
+        cup = Cup()
     }
 
     /// Stops the race behind the pause panel; also called when the app leaves the foreground.
@@ -224,8 +291,16 @@ final class GameScene: SKScene {
             beginCountdown()
         case .toggleSound:
             sound.isOn.toggle()
-            menu.showTitle(best: bestTime, soundOn: sound.isOn)
-        case .again:
+            enterTitle()
+        case .newCup:
+            cup = Cup()
+            restart(with: race.tuning)
+            enterTitle()
+        case .next:
+            showStandings()
+        case .nothing:
+            break
+        case .again, .continueCup:
             restart(with: race.tuning)
         case .title:
             mode = .title
@@ -235,7 +310,7 @@ final class GameScene: SKScene {
     }
 
     private func seatRivals() {
-        rivals = GameScene.rivalSkills.enumerated().map { i, skill in
+        rivals = cup.round.rivals.enumerated().map { i, skill in
             Rival(skill: skill, seed: raceNumber &* 1000 &+ UInt64(i) &+ 1)
         }
     }
@@ -284,7 +359,7 @@ final class GameScene: SKScene {
         case .countdown:
             advanceCountdown(by: elapsed)
             syncNodes(snapCamera: false, elapsed: elapsed)
-        case .racing, .results:
+        case .racing, .results, .standings:
             let steps = clock.advance(by: elapsed)
             for _ in 0..<steps {
                 step(riderInput())
@@ -392,6 +467,9 @@ final class GameScene: SKScene {
             hud.isHidden = false
         case "count":
             beginCountdown()
+        case "standings":
+            cup.record([1, 3, 2, 4])
+            showStandings()
         case "pause":
             beginCountdown()
             pause()
@@ -399,7 +477,7 @@ final class GameScene: SKScene {
             // Start just before the line so the results panel comes up within seconds.
             var bike = BikeState()
             bike.x = race.terrain.finishX - 40
-            race = Race(track: GameScene.track, tuning: race.tuning, bike: bike, rivals: GameScene.rivalSkills.count)
+            race = Race(track: cup.round.track, tuning: race.tuning, bike: bike, rivals: GameScene.rivalCount)
             mode = .racing
             menu.hide()
             hud.isHidden = false
@@ -429,7 +507,7 @@ final class GameScene: SKScene {
             pause()
             return
         }
-        if mode == .title || mode == .results || held {
+        if mode == .title || mode == .results || mode == .standings || held {
             for touch in touches {
                 if let action = menu.action(at: touch.location(in: menu)) {
                     perform(action)
