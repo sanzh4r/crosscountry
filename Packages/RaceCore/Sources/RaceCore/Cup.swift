@@ -10,6 +10,14 @@ public struct Cup: Codable, Equatable, Sendable {
         public let rivals: [Rival.Skill]
         /// Seconds to beat on a solo run.
         public let targetTime: Double
+
+        public init(id: String, name: String, track: Track, rivals: [Rival.Skill], targetTime: Double) {
+            self.id = id
+            self.name = name
+            self.track = track
+            self.rivals = rivals
+            self.targetTime = targetTime
+        }
     }
 
     /// Points for 1st, 2nd, 3rd and 4th.

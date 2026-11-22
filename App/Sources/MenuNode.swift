@@ -1,8 +1,8 @@
 import RaceCore
 import SpriteKit
 
-/// Everything shown around a race: the title screen, the solo track list, the start countdown, the
-/// pause panel, the results panel and the cup standings. One unit is one art pixel and the origin is the centre of
+/// Everything shown around a race: the title screen, the solo track list, the list of the player's
+/// own tracks, the start countdown, the pause panel, the results panel and the cup standings. One unit is one art pixel and the origin is the centre of
 /// the view.
 @MainActor
 final class MenuNode: SKNode {
@@ -10,6 +10,8 @@ final class MenuNode: SKNode {
         case start, toggleSound, newCup, resume, again, title
         /// Open the solo track list; ride track `index` alone.
         case soloList, solo(Int)
+        /// Open the list of built tracks; edit track `index` of it; pick a length for a new one; make it.
+        case library, editTrack(Int), newTrack, createTrack(TrackLibrary.Length)
         /// From the results: bank the result and show the standings. From the standings: ride the next race.
         case next, continueCup
         /// The tap was used up by the menu itself.
@@ -72,6 +74,7 @@ final class MenuNode: SKNode {
     private let soundLabel: PixelLabel
     private let newCupLabel: PixelLabel
     private var soloButton: Button?
+    private var builderButton: Button?
     /// True after one tap on "new cup"; a second tap there resets the cup.
     private var newCupArmed = false
 
@@ -97,6 +100,15 @@ final class MenuNode: SKNode {
     private var soloRowsOpen: [Bool] = []
     private var soloButtons: [Button] = []
     private static let soloRowY: (first: CGFloat, step: CGFloat) = (36, 20)
+
+    private let libraryGroup = SKNode()
+    private var libraryNames: [PixelLabel] = []
+    private var libraryDetails: [PixelLabel] = []
+    private var libraryCount = 0
+    private var libraryButtons: [Button] = []
+    private static let libraryRowY: (first: CGFloat, step: CGFloat) = (44, 18)
+    private let lengthGroup = SKNode()
+    private var lengthButtons: [Button] = []
 
     private let standingsGroup = SKNode()
     private let standingsCaption: PixelLabel
@@ -140,9 +152,12 @@ final class MenuNode: SKNode {
         prompt.position = CGPoint(x: 0, y: -30)
         bestOnTitle.position = CGPoint(x: 0, y: -52)
         for node in [logo, cupLine, trackLine, prompt, bestOnTitle, soundLabel, newCupLabel] { titleGroup.addChild(node) }
-        var solo = addButton(to: titleGroup, x: 0, y: -82, width: 112)
+        var solo = addButton(to: titleGroup, x: -60, y: -82, width: 112)
         solo.set("SOLO RUN", .soloList)
         soloButton = solo
+        var builder = addButton(to: titleGroup, x: 60, y: -82, width: 100)
+        builder.set("BUILDER", .library)
+        builderButton = builder
         addChild(titleGroup)
 
         countLabel.position = CGPoint(x: 0, y: 24)
@@ -156,6 +171,9 @@ final class MenuNode: SKNode {
         addChild(standingsGroup)
         buildSolo()
         addChild(soloGroup)
+        buildLibrary()
+        addChild(libraryGroup)
+        addChild(lengthGroup)
         buildPause()
         pauseGroup.zPosition = 3
         addChild(pauseGroup)
@@ -277,6 +295,48 @@ final class MenuNode: SKNode {
         soloButtons = [back]
     }
 
+    private func buildLibrary() {
+        let p = palette
+        libraryGroup.position = CGPoint(x: 0, y: MenuNode.panelCentreY)
+        addPanel(to: libraryGroup, width: 300, height: 190)
+        let heading = PixelLabel("YOUR TRACKS", colour: p.cream, shadow: p.dark, magnify: 3)
+        heading.position = CGPoint(x: 0, y: 72)
+        heading.zPosition = 1
+        libraryGroup.addChild(heading)
+        for i in 0..<TrackLibrary.maxTracks {
+            let y = MenuNode.libraryRowY.first - CGFloat(i) * MenuNode.libraryRowY.step
+            let name = PixelLabel(colour: p.cream, magnify: 2, alignment: .left)
+            name.position = CGPoint(x: -134, y: y)
+            let detail = PixelLabel(colour: p.sand, magnify: 2, alignment: .right)
+            detail.position = CGPoint(x: 134, y: y)
+            for node in [name, detail] {
+                node.zPosition = 1
+                libraryGroup.addChild(node)
+            }
+            libraryNames.append(name)
+            libraryDetails.append(detail)
+        }
+        libraryButtons = [addButton(to: libraryGroup, x: -48, y: -74, width: 124),
+                          addButton(to: libraryGroup, x: 72, y: -74, width: 76)]
+        libraryButtons[0].set("NEW TRACK", .newTrack)
+        libraryButtons[1].set("BACK", .title)
+
+        lengthGroup.position = CGPoint(x: 0, y: MenuNode.panelCentreY)
+        addPanel(to: lengthGroup, width: 220, height: 176)
+        let lengthHeading = PixelLabel("HOW LONG?", colour: p.cream, shadow: p.dark, magnify: 3)
+        lengthHeading.position = CGPoint(x: 0, y: 64)
+        lengthHeading.zPosition = 1
+        lengthGroup.addChild(lengthHeading)
+        for (i, (length, word)) in [(TrackLibrary.Length.short, "SHORT"), (.medium, "MEDIUM"), (.long, "LONG")].enumerated() {
+            var button = addButton(to: lengthGroup, x: 0, y: CGFloat(30 - i * 30), width: 180)
+            button.set("\(word) \(Int(Double(length.rawValue) * Track.cellWidth)) M", .createTrack(length))
+            lengthButtons.append(button)
+        }
+        var back = addButton(to: lengthGroup, x: 0, y: -66, width: 76)
+        back.set("BACK", .library)
+        lengthButtons.append(back)
+    }
+
     private func buildPause() {
         let p = palette
         addPanel(to: pauseGroup, width: 180, height: 158)
@@ -317,7 +377,7 @@ final class MenuNode: SKNode {
     }
 
     /// A filled box with a dark outline and a border inside it.
-    private static func box(width: Int, height: Int, fill: [Int], border: [Int], outline: [Int]) -> SKTexture {
+    static func box(width: Int, height: Int, fill: [Int], border: [Int], outline: [Int]) -> SKTexture {
         var canvas = PixelCanvas(width: width, height: height)
         for y in 0..<height {
             for x in 0..<width {
@@ -343,7 +403,31 @@ final class MenuNode: SKNode {
         resultsGroup.isHidden = true
         standingsGroup.isHidden = true
         soloGroup.isHidden = true
+        libraryGroup.isHidden = true
+        lengthGroup.isHidden = true
         pauseGroup.isHidden = true
+    }
+
+    /// The player's own tracks; tapping one opens it in the builder.
+    func showLibrary(_ library: TrackLibrary) {
+        hide()
+        dim.isHidden = false
+        libraryGroup.isHidden = false
+        libraryCount = library.tracks.count
+        for i in libraryNames.indices {
+            let saved = i < library.tracks.count ? library.tracks[i] : nil
+            libraryNames[i].text = saved?.name ?? (i == 0 ? "NO TRACKS YET" : "")
+            libraryDetails[i].text = saved.map {
+                "\(Int(Double($0.track.lengthCells) * Track.cellWidth)) M \($0.track.pieces.count) PCS"
+            } ?? ""
+        }
+        libraryButtons[0].set(library.isFull ? nil : "NEW TRACK", .newTrack)
+    }
+
+    func showLengthChoice() {
+        hide()
+        dim.isHidden = false
+        lengthGroup.isHidden = false
     }
 
     /// The list of tracks to ride alone; a locked track shows no name and cannot be picked.
@@ -387,14 +471,26 @@ final class MenuNode: SKNode {
     }
 
     /// `lastRace` is true for the cup's final race. On a solo run `target` is the time to beat.
-    func showResults(for race: Race, best: Double?, newBest: Bool, lastRace: Bool, target: Double? = nil) {
+    /// `built` is true for a ride on one of the player's own tracks, which goes back to the builder.
+    func showResults(for race: Race, best: Double?, newBest: Bool, lastRace: Bool, target: Double? = nil,
+                     built: Bool = false) {
         hide()
         dim.isHidden = false
         resultsGroup.isHidden = false
         let place = race.position(of: 0)
         timeLabel.text = "TIME \(HUDNode.format(time: race.time))"
-        for node in rivalRowNodes { node.isHidden = target != nil }
+        let alone = race.bikes.count < 2
+        for node in rivalRowNodes { node.isHidden = alone }
         soloResultLine.isHidden = target == nil
+        if built {
+            placeLabel.text = alone ? "FINISHED" : "\(MenuNode.placeNames[min(place, 4) - 1]) PLACE"
+            bestLabel.text = ""
+            resultButtons[0].set("RETRY", .again)
+            resultButtons[1].set("EDIT", .title)
+            updateResults(for: race)
+            for label in rowPoints { label.isHidden = true }
+            return
+        }
         if let target {
             placeLabel.text = race.time <= target ? "TARGET BEAT!" : "TOO SLOW"
             soloResultLine.text = "TARGET \(HUDNode.format(time: target))"
@@ -483,7 +579,9 @@ final class MenuNode: SKNode {
                 !label.isHidden && abs(point.x - label.position.x) < 70 && abs(point.y - label.position.y) < 18
             }
             if near(soundLabel) { return .toggleSound }
-            if let soloButton, soloButton.frame.insetBy(dx: -8, dy: -8).contains(point) { return soloButton.action }
+            for button in [soloButton, builderButton] {
+                if let button, button.frame.insetBy(dx: -4, dy: -8).contains(point) { return button.action }
+            }
             if near(newCupLabel) {
                 if newCupArmed { return .newCup }
                 newCupArmed = true
@@ -494,6 +592,14 @@ final class MenuNode: SKNode {
         }
         if !resultsGroup.isHidden { return pressed(resultButtons, in: resultsGroup, slack: 8) }
         if !standingsGroup.isHidden { return pressed(standingsButtons, in: standingsGroup, slack: 8) }
+        if !lengthGroup.isHidden { return pressed(lengthButtons, in: lengthGroup, slack: 2) ?? .nothing }
+        if !libraryGroup.isHidden {
+            let local = CGPoint(x: point.x - libraryGroup.position.x, y: point.y - libraryGroup.position.y)
+            let rows = MenuNode.libraryRowY
+            let row = Int(((rows.first + rows.step / 2 - local.y) / rows.step).rounded(.down))
+            if abs(local.x) < 150, row >= 0, row < libraryCount { return .editTrack(row) }
+            return pressed(libraryButtons, in: libraryGroup, slack: 8) ?? .nothing
+        }
         if !soloGroup.isHidden {
             let local = CGPoint(x: point.x - soloGroup.position.x, y: point.y - soloGroup.position.y)
             let rows = MenuNode.soloRowY
