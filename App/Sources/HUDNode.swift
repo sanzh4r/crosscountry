@@ -2,7 +2,7 @@ import RaceCore
 import SpriteKit
 import UIKit
 
-/// The dashboard (speed and engine heat), race time as `0:00.0`, and the large final time once finished.
+/// The dashboard (speed and engine heat), race time as `0:00.0`, place in the race as `2/4`, and the large final time once finished.
 /// Laid out in screen points (its parent is scaled so one unit is one view point).
 @MainActor
 final class HUDNode: SKNode {
@@ -10,6 +10,7 @@ final class HUDNode: SKNode {
     private static let dashboardGap: CGFloat = 4
 
     private let timeLabel = HUDNode.label(size: 26)
+    private let positionLabel = HUDNode.label(size: 22)
     private let finalTimeLabel = HUDNode.label(size: 64)
     private let dashboard = DashboardNode()
 
@@ -17,10 +18,12 @@ final class HUDNode: SKNode {
         super.init()
         timeLabel.horizontalAlignmentMode = .left
         timeLabel.verticalAlignmentMode = .top
+        positionLabel.horizontalAlignmentMode = .left
+        positionLabel.verticalAlignmentMode = .top
         finalTimeLabel.horizontalAlignmentMode = .center
         finalTimeLabel.verticalAlignmentMode = .center
         finalTimeLabel.isHidden = true
-        for node in [timeLabel, finalTimeLabel, dashboard] { addChild(node) }
+        for node in [timeLabel, positionLabel, finalTimeLabel, dashboard] { addChild(node) }
     }
 
     @available(*, unavailable)
@@ -35,6 +38,7 @@ final class HUDNode: SKNode {
         dashboard.setScale(pixel)
         dashboard.position = CGPoint(x: 0, y: viewSize.height / 2 - HUDNode.dashboardGap
                                      - DashboardNode.size.height * pixel / 2)
+        positionLabel.position = CGPoint(x: left, y: top - 32)
         finalTimeLabel.position = CGPoint(x: 0, y: 30)
     }
 
@@ -42,8 +46,11 @@ final class HUDNode: SKNode {
         let time = HUDNode.format(time: race.time)
         timeLabel.text = time
         dashboard.update(with: race.bike, elapsed: elapsed)
+        let place = "\(race.position(of: 0))/\(race.bikes.count)"
+        positionLabel.text = place
+        positionLabel.isHidden = race.bikes.count < 2
         finalTimeLabel.isHidden = !race.bike.finished
-        finalTimeLabel.text = time
+        finalTimeLabel.text = race.bikes.count < 2 ? time : "\(place)  \(time)"
     }
 
     /// `0:00.0`, rounded to the nearest tenth (race.time drifts slightly from summing dt).

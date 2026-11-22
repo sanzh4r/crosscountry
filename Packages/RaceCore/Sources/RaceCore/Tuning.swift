@@ -15,6 +15,13 @@ public struct Tuning: Codable, Equatable, Sendable {
     public var stallDuration = 3.0
     public var heatFillTime = 4.0
     public var heatDrainTime = 6.0
+    public var laneChangeTime = 0.25          // seconds to cross one lane
+    public var bikeLength = 1.8               // metres; closer than this in one lane is contact
+    public var laneBumpSpeedFactor = 0.9      // speed kept by a bike whose lane change is refused
+    public var laneBumpCooldown = 0.3
+    public var mudTopSpeed = 9.0
+    public var mudDecel = 40.0
+    public var boostPadSpeed = 32.0
 
     public init() {}
 }

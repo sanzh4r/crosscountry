@@ -4,11 +4,12 @@ import SpriteKit
 import UIKit
 
 /// Merges the hardware keyboard (polled each frame) and the on-screen touch buttons into one `RiderInput`.
-/// Keys: Z gas, X boost, left arrow lean back, right arrow lean forward, R restart.
+/// Keys: Z gas, X boost, left arrow lean back, right arrow lean forward, up and down arrows change
+/// lane, R restart.
 @MainActor
 final class InputSource {
-    private static let buttonDiameter: CGFloat = 72     // view points (at least 64)
-    private static let buttonGap: CGFloat = 14
+    private static let buttonDiameter: CGFloat = 64     // view points (at least 64)
+    private static let buttonGap: CGFloat = 12
     private static let margin: CGFloat = 16
 
     /// The input for the next simulation steps, as of the last `poll()`.
@@ -21,6 +22,11 @@ final class InputSource {
         didSet { restartButton.isHidden = !showsRestartButton }
     }
 
+    private let laneUpButton = TouchButton(symbol: "chevron.up", diameter: InputSource.buttonDiameter)
+    private let laneDownButton = TouchButton(symbol: "chevron.down", diameter: InputSource.buttonDiameter)
+    private var laneWasHeld = 0
+    /// A lane press waits here until the race has taken a step with it.
+    private var pendingLane = 0
     private let leanBackButton = TouchButton(symbol: "arrow.left", diameter: InputSource.buttonDiameter)
     private let leanForwardButton = TouchButton(symbol: "arrow.right", diameter: InputSource.buttonDiameter)
     private let gasButton = TouchButton(symbol: "arrow.up", diameter: InputSource.buttonDiameter)
@@ -32,7 +38,7 @@ final class InputSource {
     private var restartWasHeld = false
 
     private var allButtons: [TouchButton] {
-        [leanBackButton, leanForwardButton, gasButton, boostButton, restartButton]
+        [laneUpButton, laneDownButton, leanBackButton, leanForwardButton, gasButton, boostButton, restartButton]
     }
 
     init() {
@@ -50,8 +56,11 @@ final class InputSource {
         let left = -viewSize.width / 2 + max(insets.left, InputSource.margin) + radius
         let right = viewSize.width / 2 - max(insets.right, InputSource.margin) - radius
         let bottom = -viewSize.height / 2 + max(insets.bottom, InputSource.margin) + radius
-        leanBackButton.position = CGPoint(x: left, y: bottom)
-        leanForwardButton.position = CGPoint(x: left + step, y: bottom)
+        // Left thumb: lanes stacked at the edge, lean beside them.
+        laneUpButton.position = CGPoint(x: left, y: bottom + step)
+        laneDownButton.position = CGPoint(x: left, y: bottom)
+        leanBackButton.position = CGPoint(x: left + step, y: bottom)
+        leanForwardButton.position = CGPoint(x: left + 2 * step, y: bottom)
         gasButton.position = CGPoint(x: right - step, y: bottom)
         boostButton.position = CGPoint(x: right, y: bottom)
         restartButton.position = CGPoint(x: 0, y: -50)
@@ -67,6 +76,12 @@ final class InputSource {
         for touch in touches { touchPoints[ObjectIdentifier(touch)] = nil }
     }
 
+    /// Call after the race has stepped with `current`, so a lane press is used once.
+    func laneChangeTaken() {
+        pendingLane = 0
+        current.laneChange = 0
+    }
+
     // MARK: Polling
 
     /// Reads the keyboard and the touch buttons; call once per frame before stepping the race.
@@ -80,9 +95,14 @@ final class InputSource {
 
         let back = key(.leftArrow) || leanBackButton.isHeld
         let forward = key(.rightArrow) || leanForwardButton.isHeld
+        // One lane per press: up is toward the far lane (-1), down toward the near one (+1).
+        let laneHeld = (key(.downArrow) || laneDownButton.isHeld ? 1 : 0) - (key(.upArrow) || laneUpButton.isHeld ? 1 : 0)
+        if laneHeld != 0 && laneHeld != laneWasHeld { pendingLane = laneHeld }
+        laneWasHeld = laneHeld
         current = RiderInput(gas: key(.keyZ) || gasButton.isHeld,
                              boost: key(.keyX) || boostButton.isHeld,
-                             lean: (forward ? 1 : 0) - (back ? 1 : 0))
+                             lean: (forward ? 1 : 0) - (back ? 1 : 0),
+                             laneChange: pendingLane)
 
         let restartHeld = key(.keyR) || restartButton.isHeld
         restartPressed = restartHeld && !restartWasHeld

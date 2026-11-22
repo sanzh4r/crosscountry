@@ -29,10 +29,20 @@ final class BikeNode: SKNode {
     /// 0 = riding pose, `standFrames.count` = foot planted.
     private var standPhase: Double
 
-    init(pointsPerMetre: CGFloat) {
+    /// Scene points between neighbouring lanes; the far lane is drawn highest.
+    static let laneSpacing: CGFloat = 9
+
+    /// How far above the middle lane a bike in `lane` is drawn.
+    static func laneRise(_ lane: Double) -> CGFloat {
+        ((CGFloat(Track.laneCount - 1) / 2 - CGFloat(lane)) * laneSpacing).rounded()
+    }
+
+    /// `style` 0 is the player's teal rider; 1...3 are the rivals' colours.
+    init(pointsPerMetre: CGFloat, style: Int = 0) {
         self.pointsPerMetre = pointsPerMetre
-        frames = (0..<ArtInfo.shared.rideFrames).map { Art.texture("bike-\($0)") }
-        standFrames = (0..<ArtInfo.shared.standFrames).map { Art.texture("stand-\($0)") }
+        let suffix = style == 0 ? "" : "-r\(style)"
+        frames = (0..<ArtInfo.shared.rideFrames).map { Art.texture("bike-\($0)\(suffix)") }
+        standFrames = (0..<ArtInfo.shared.standFrames).map { Art.texture("stand-\($0)\(suffix)") }
         standPhase = Double(standFrames.count)   // a race starts with the foot down
         sprite = SKSpriteNode(texture: standFrames.last ?? frames[0])
         restY = sprite.size.height / 2 - BikeNode.sink
@@ -46,7 +56,8 @@ final class BikeNode: SKNode {
 
     /// `elapsed` is simulated seconds since the last update.
     func update(with bike: BikeState, tuning: Tuning, elapsed: Double) {
-        position = CGPoint(x: bike.x * pointsPerMetre, y: bike.y * pointsPerMetre)
+        position = CGPoint(x: bike.x * pointsPerMetre, y: bike.y * pointsPerMetre + BikeNode.laneRise(bike.lane))
+        zPosition = 1 + CGFloat(bike.lane) * 0.1          // nearer lanes cover farther ones
         zRotation = bike.angle
         sprite.colorBlendFactor = 0
         sprite.alpha = 1

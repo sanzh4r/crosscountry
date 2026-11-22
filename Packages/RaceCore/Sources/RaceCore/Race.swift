@@ -3,47 +3,163 @@ import Foundation
 public struct Race: Sendable {
     public static let dt = 1.0 / 60.0
 
+    /// Start grid: the front row sits two cells in, the back row this far behind it.
+    static let gridRowGap = 2.5
+    /// Lanes on the grid for the player and then each rival; the fourth bike starts in the back row.
+    private static let gridLanes = [1, 0, 2, 0]
+
+    public let track: Track
     public let terrain: Terrain
     public var tuning: Tuning
-    public private(set) var bike: BikeState
-    public private(set) var time: Double      // stops advancing once bike.finished
+    /// Every bike in the race; the player is first, rivals follow.
+    public private(set) var bikes: [BikeState]
+    /// The player's race time; stops advancing once the player has finished.
+    public private(set) var time: Double
+    /// Seconds since the start for everyone; keeps running after the player finishes.
+    private var clock = 0.0
+    private let surfaces: [PlacedPiece]
 
-    public init(track: Track, tuning: Tuning = Tuning(), bike: BikeState? = nil) {
+    /// The player's bike.
+    public var bike: BikeState { bikes[0] }
+
+    /// `bike` replaces the player's start state (tests); `rivals` adds that many bikes to the grid.
+    public init(track: Track, tuning: Tuning = Tuning(), bike: BikeState? = nil, rivals: Int = 0) {
+        self.track = track
         self.terrain = Terrain(track: track)
         self.tuning = tuning
-        var start = bike ?? {
+        self.surfaces = track.pieces.filter { !$0.kind.isTerrain }
+        var grid: [BikeState] = []
+        for i in 0...max(rivals, 0) {
             var b = BikeState()
-            b.x = 2 * Track.cellWidth
-            return b
-        }()
-        if start.phase == .grounded { Race.snapToTerrain(&start, terrain: terrain) }
-        self.bike = start
+            let lane = Race.gridLanes[i % Race.gridLanes.count]
+            b.x = 2 * Track.cellWidth - Double(i / Track.laneCount) * Race.gridRowGap
+            b.lane = Double(lane)
+            b.targetLane = lane
+            if i == 0, let bike { b = bike }
+            if b.phase == .grounded { Race.snapToTerrain(&b, terrain: terrain) }
+            grid.append(b)
+        }
+        self.bikes = grid
         self.time = 0
     }
 
-    public mutating func step(_ rawInput: RiderInput) {
+    /// Steps a race with only the player riding; any rivals get no input.
+    public mutating func step(_ input: RiderInput) { step([input]) }
+
+    /// One step for every bike; `inputs[i]` drives `bikes[i]`, missing entries mean no input.
+    public mutating func step(_ inputs: [RiderInput]) {
+        clock += Race.dt
+        if !bikes[0].finished { time += Race.dt }
+        for i in bikes.indices {
+            let raw = i < inputs.count ? inputs[i] : RiderInput()
+            requestLaneChange(i, raw.laneChange)
+            var b = bikes[i]
+            advance(&b, raw)
+            if b.finished && b.finishTime == nil { b.finishTime = clock }
+            bikes[i] = b
+        }
+        resolveRearContacts()
+    }
+
+    /// Place in the race, 1 = leading. Finished bikes rank by finish time, the rest by distance.
+    public func position(of index: Int) -> Int {
+        let me = bikes[index]
+        var ahead = 0
+        for (i, other) in bikes.enumerated() where i != index {
+            switch (me.finishTime, other.finishTime) {
+            case let (mine?, theirs?): if theirs < mine || (theirs == mine && i < index) { ahead += 1 }
+            case (nil, _?): ahead += 1
+            case (_?, nil): break
+            case (nil, nil): if other.x > me.x || (other.x == me.x && i < index) { ahead += 1 }
+            }
+        }
+        return ahead + 1
+    }
+
+    /// The surface piece (mud or boost pad) under `x` in `lane`, if any.
+    public func surface(at x: Double, lane: Int) -> PieceKind? {
+        let cell = Int((x / Track.cellWidth).rounded(.down))
+        return surfaces.first { $0.lane == lane && cell >= $0.cell && cell < $0.cell + $0.kind.widthCells }?.kind
+    }
+
+    private func advance(_ bike: inout BikeState, _ rawInput: RiderInput) {
         let crashed = if case .crashed = bike.phase { true } else { false }
         let input = bike.finished || crashed ? RiderInput() : rawInput
-        if !bike.finished { time += Race.dt }
         // Engine running: not stalled and not finished. Boost implies gas.
         let running = bike.stallRemaining == 0 && !bike.finished
         let boosting = running && input.boost
         let gas = running && (input.gas || input.boost)
         switch bike.phase {
-        case .grounded: stepGrounded(gas: gas, boost: boosting)
-        case .airborne: stepAirborne(lean: input.lean)
-        case .crashed(let remaining): stepCrashed(remaining: remaining)
+        case .grounded: stepGrounded(&bike, gas: gas, boost: boosting)
+        case .airborne: stepAirborne(&bike, lean: input.lean)
+        case .crashed(let remaining): stepCrashed(&bike, remaining: remaining)
         }
-        updateHeatAndStall(boosting: boosting)
+        updateHeatAndStall(&bike, boosting: boosting)
+        stepLane(&bike)
         if bike.x >= terrain.finishX { bike.finished = true }
+    }
+
+    // MARK: Lanes and contact
+
+    /// A bike not already changing lane starts moving one lane over. If another bike is in the way
+    /// the move is refused and the mover loses a little speed.
+    private mutating func requestLaneChange(_ index: Int, _ direction: Int) {
+        var b = bikes[index]
+        if case .crashed = b.phase { return }
+        guard direction != 0, !b.finished, b.laneCooldown == 0, b.lane == Double(b.targetLane) else { return }
+        let wanted = b.targetLane + (direction > 0 ? 1 : -1)
+        guard (0..<Track.laneCount).contains(wanted) else { return }
+        let blocked = bikes.enumerated().contains { j, other in
+            if j == index { return false }
+            if case .crashed = other.phase { return false }
+            return abs(other.x - b.x) < tuning.bikeLength
+                && (other.targetLane == wanted || abs(other.lane - Double(wanted)) < 0.5)
+        }
+        if blocked {
+            Race.scaleSpeed(&b, tuning.laneBumpSpeedFactor)
+            b.laneCooldown = tuning.laneBumpCooldown
+        } else {
+            b.targetLane = wanted
+        }
+        bikes[index] = b
+    }
+
+    private func stepLane(_ bike: inout BikeState) {
+        bike.laneCooldown = max(0, bike.laneCooldown - Race.dt)
+        let target = Double(bike.targetLane)
+        let move = Race.dt / max(tuning.laneChangeTime, Race.dt)
+        bike.lane = bike.lane < target ? min(bike.lane + move, target) : max(bike.lane - move, target)
+    }
+
+    /// A bike on the ground that runs into the back of another in its lane is held to that bike's speed.
+    private mutating func resolveRearContacts() {
+        guard bikes.count > 1 else { return }
+        for i in bikes.indices where bikes[i].phase == .grounded {
+            for j in bikes.indices where j != i && bikes[j].phase == .grounded {
+                let gap = bikes[j].x - bikes[i].x
+                guard gap > 0, gap < tuning.bikeLength, abs(bikes[j].lane - bikes[i].lane) < 0.5 else { continue }
+                let mine = bikes[i].speed, theirs = bikes[j].speed
+                if mine > theirs { Race.scaleSpeed(&bikes[i], mine > 0 ? theirs / mine : 0) }
+            }
+        }
+    }
+
+    private static func scaleSpeed(_ bike: inout BikeState, _ factor: Double) {
+        bike.vx *= factor
+        bike.vy *= factor
     }
 
     // MARK: Grounded riding
 
-    private mutating func stepGrounded(gas: Bool, boost: Bool) {
+    private func stepGrounded(_ bike: inout BikeState, gas: Bool, boost: Bool) {
         let slope = terrain.slope(at: bike.x)
         var speed = bike.speed
         speed = throttled(speed, gas: gas, boost: boost)
+        switch surface(at: bike.x, lane: Int(bike.lane.rounded())) {
+        case .mud: if speed > tuning.mudTopSpeed { speed = max(tuning.mudTopSpeed, speed - tuning.mudDecel * Race.dt) }
+        case .boostPad: speed = max(speed, tuning.boostPadSpeed)
+        default: break
+        }
         speed -= tuning.gravity * tuning.slopeGravityFactor * sin(slope) * Race.dt
         speed = max(0, speed)
         // Ballistic candidate from the velocity along the current slope; take off if it clears the ground
@@ -67,18 +183,18 @@ public struct Race: Sendable {
     // MARK: Airborne and landing
 
     /// Ballistic flight; lean rotates the bike (positive lean = nose down). Gas and boost do nothing here.
-    private mutating func stepAirborne(lean: Double) {
+    private func stepAirborne(_ bike: inout BikeState, lean: Double) {
         let dt = Race.dt
         bike.x += bike.vx * dt
         bike.y += bike.vy * dt - 0.5 * tuning.gravity * dt * dt
         bike.vy -= tuning.gravity * dt
         bike.angle -= min(max(lean, -1), 1) * tuning.leanRate * dt
-        if bike.y <= terrain.height(at: bike.x) { land() }
+        if bike.y <= terrain.height(at: bike.x) { land(&bike) }
     }
 
     /// Grades the landing by how far the bike's angle is from the slope: clean keeps the
     /// along-slope speed, sloppy loses some, anything worse crashes.
-    private mutating func land() {
+    private func land(_ bike: inout BikeState) {
         let slope = terrain.slope(at: bike.x)
         let d = abs((bike.angle - slope).remainder(dividingBy: 2 * .pi))
         let s = max(0, bike.vx * cos(slope) + bike.vy * sin(slope))
@@ -99,7 +215,7 @@ public struct Race: Sendable {
     // MARK: Crashed
 
     /// Position is fixed while the timer runs; on expiry the bike is back on the ground, stopped.
-    private mutating func stepCrashed(remaining: Double) {
+    private func stepCrashed(_ bike: inout BikeState, remaining: Double) {
         let left = max(0, remaining - Race.dt)
         if left > 0 {
             bike.phase = .crashed(remaining: left)
@@ -125,7 +241,7 @@ public struct Race: Sendable {
 
     /// Runs every step in every phase. Boosting fills heat; reaching 1 stalls the engine
     /// (timer starts counting down on the following step). Otherwise heat drains.
-    private mutating func updateHeatAndStall(boosting: Bool) {
+    private func updateHeatAndStall(_ bike: inout BikeState, boosting: Bool) {
         if bike.stallRemaining > 0 {
             bike.stallRemaining = max(0, bike.stallRemaining - Race.dt)
             bike.heat = 0

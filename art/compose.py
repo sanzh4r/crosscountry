@@ -108,6 +108,26 @@ def round_wheel_bottoms(img, wheels, trim=2):
     return img
 
 
+# Rival riders are the player's frames with the teal suit and helmet turned to another hue.
+RIVAL_HUES = [0.97, 0.76, 0.27]               # crimson, violet, green
+
+
+def recoloured(img, hue):
+    import colorsys
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                continue
+            h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if 0.42 <= h <= 0.58 and s > 0.2:                 # the teal of the suit and helmet
+                r, g, b = colorsys.hsv_to_rgb(hue, min(s * 1.05, 1), v)
+                px[x, y] = (round(r * 255), round(g * 255), round(b * 255), a)
+    return out
+
+
 PLANT = 3                                     # pieces sink this far into their floor
 
 
@@ -306,13 +326,19 @@ def assets():
     boxes = [f.getbbox() for f in ride]
     box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
     wheels = bottom_runs(ride[0])
+    def save_rider(frame, name):
+        frame = round_wheel_bottoms(frame, wheels).crop(box)
+        frame.save(OUT / f"{name}.png")
+        for k, hue in enumerate(RIVAL_HUES, start=1):
+            recoloured(frame, hue).save(OUT / f"{name}-r{k}.png")
+
     for i, f in enumerate(ride):
-        round_wheel_bottoms(f, wheels).crop(box).save(OUT / f"bike-{i}.png")
+        save_rider(f, f"bike-{i}")
     # Stopping: the rider takes the near foot off the peg and plants it. Frame 0 repeats the riding
     # pose, so it is left out.
     stand = [Image.open(f).convert("RGBA") for f in sorted((RAW / "stand").glob("stand-*.png"))][1:]
     for i, f in enumerate(stand):
-        round_wheel_bottoms(f, wheels).crop(box).save(OUT / f"stand-{i}.png")
+        save_rider(f, f"stand-{i}")
     (OUT / "bike.png").unlink(missing_ok=True)
     if (RAW / "gate.png").exists():
         snap(trimmed(load("gate")), palette).save(OUT / "gate.png")
