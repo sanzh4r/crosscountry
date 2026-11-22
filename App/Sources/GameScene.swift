@@ -461,7 +461,8 @@ final class GameScene: SKScene {
             node.update(with: bike, tuning: race.tuning, elapsed: elapsed)
         }
         hud.update(with: race, elapsed: elapsed)
-        sound.update(with: race.bike, input: lastInputs.first ?? RiderInput(), tuning: race.tuning,
+        sound.update(with: race.bike, rivals: Array(race.bikes.dropFirst()), input: lastInputs.first ?? RiderInput(),
+                     tuning: race.tuning,
                      engineOn: mode != .title, elapsed: elapsed)
 
         let m = GameScene.pointsPerMetre

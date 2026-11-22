@@ -2,6 +2,7 @@ import AVFoundation
 import RaceCore
 
 /// All game sound: an engine loop whose pitch follows the bike's speed, a boost roar layered over it,
+/// the same loop quieter for each rival (louder the nearer it is, panned to its side of the player),
 /// one-shot effects, and the music. Files come from `audio/compose.py`. A missing file or an audio
 /// failure only makes that sound silent.
 @MainActor
@@ -27,11 +28,23 @@ final class SoundPlayer {
     private static let warningHeat = 0.72
     private static let warningInterval = 0.55
     private static let voiceCount = 6
+    /// Rival engines: loudness right beside the player (ticking over, and under way), the distance
+    /// in metres at which one can no longer be heard and at which it sits fully to one side, and each
+    /// rival's own pitch so that no two engines sound the same.
+    private static let rivalVolume: (idle: Float, riding: Float) = (0.07, 0.2)
+    private static let rivalEarshot = 22.0
+    private static let rivalPanDistance = 10.0
+    private static let rivalPitch: [Float] = [0.9, 1.07, 1.16]
+    /// Below this speed (m/s) a rival's engine is only ticking over.
+    private static let rivalIdleSpeed = 1.0
 
     private let engine = AVAudioEngine()
     private let enginePlayer = AVAudioPlayerNode()
     private let engineSpeed = AVAudioUnitVarispeed()
     private let boostPlayer = AVAudioPlayerNode()
+    private let rivalPlayers = SoundPlayer.rivalPitch.map { _ in AVAudioPlayerNode() }
+    private let rivalSpeeds = SoundPlayer.rivalPitch.map { _ in AVAudioUnitVarispeed() }
+    private var rivalLevels = SoundPlayer.rivalPitch.map { _ in Float(0) }
     private let voices: [AVAudioPlayerNode] = (0..<SoundPlayer.voiceCount).map { _ in AVAudioPlayerNode() }
     private var nextVoice = 0
     private var engineLoop: AVAudioPCMBuffer?
@@ -61,6 +74,7 @@ final class SoundPlayer {
                 boostPlayer.volume = 0
                 engineLevel = 0
                 boostLevel = 0
+                muteRivals()
             }
         }
     }
@@ -81,6 +95,12 @@ final class SoundPlayer {
             engine.attach(engineSpeed)
             engine.connect(enginePlayer, to: engineSpeed, format: engineLoop.format)
             engine.connect(engineSpeed, to: mixer, format: engineLoop.format)
+            for (player, speed) in zip(rivalPlayers, rivalSpeeds) {
+                engine.attach(player)
+                engine.attach(speed)
+                engine.connect(player, to: speed, format: engineLoop.format)
+                engine.connect(speed, to: mixer, format: engineLoop.format)
+            }
         }
         if let boostLoop {
             engine.attach(boostPlayer)
@@ -129,9 +149,14 @@ final class SoundPlayer {
             boostPlayer.volume = 0
             engineLevel = 0
             boostLevel = 0
+            muteRivals()
             if let engineLoop {
                 enginePlayer.scheduleBuffer(engineLoop, at: nil, options: .loops)
                 enginePlayer.play()
+                for player in rivalPlayers {
+                    player.scheduleBuffer(engineLoop, at: nil, options: .loops)
+                    player.play()
+                }
             }
             if let boostLoop {
                 boostPlayer.scheduleBuffer(boostLoop, at: nil, options: .loops)
@@ -144,7 +169,7 @@ final class SoundPlayer {
     /// What is loaded and playing, for checking a build without ears.
     var status: String {
         "engine running \(engine.isRunning), engine loop \(engineLoop != nil) playing \(enginePlayer.isPlaying) "
-            + "level \(engineLevel) rate \(rate), boost loop \(boostLoop != nil), effects \(effects.count), "
+            + "level \(engineLevel) rate \(rate), rivals \(rivalLevels) pan \(rivalPlayers.map(\.pan)), boost loop \(boostLoop != nil), effects \(effects.count), "
             + "music loaded \(music != nil) playing \(music?.isPlaying ?? false), silenced \(silenced), "
             + "session \(AVAudioSession.sharedInstance().category.rawValue)"
     }
@@ -167,6 +192,11 @@ final class SoundPlayer {
         music?.volume = SoundPlayer.musicVolume
         stopFanfares()
         warningClock = 0
+    }
+
+    private func muteRivals() {
+        for player in rivalPlayers { player.volume = 0 }
+        rivalLevels = rivalLevels.map { _ in 0 }
     }
 
     private func stopFanfares() {
@@ -193,9 +223,30 @@ final class SoundPlayer {
         voice.play()
     }
 
+    /// Each rival's engine: quieter with distance, panned to its side of the player, pitched by its speed.
+    private func updateRivals(_ rivals: [BikeState], around bike: BikeState, tuning: Tuning, on: Bool, follow: Float) {
+        guard engineLoop != nil else { return }
+        let rates = SoundPlayer.engineRate
+        for (i, rival) in rivals.prefix(rivalPlayers.count).enumerated() {
+            var down = rival.stallRemaining > 0
+            if case .crashed = rival.phase { down = true }
+            let away = rival.x - bike.x
+            let near = Float(max(1 - abs(away) / SoundPlayer.rivalEarshot, 0))
+            let riding = rival.speed > SoundPlayer.rivalIdleSpeed && !rival.finished
+            let loudest = riding ? SoundPlayer.rivalVolume.riding : SoundPlayer.rivalVolume.idle
+            let target = down || !on ? 0 : loudest * near * near
+            rivalLevels[i] += (target - rivalLevels[i]) * follow
+            let pace = Float(min(max(rival.speed / tuning.boostTopSpeed, 0), 1))
+            rivalSpeeds[i].rate = (rates.slow + (rates.fast - rates.slow) * pace) * SoundPlayer.rivalPitch[i]
+            rivalPlayers[i].volume = rivalLevels[i]
+            rivalPlayers[i].pan = Float(min(max(away / SoundPlayer.rivalPanDistance, -1), 1))
+        }
+    }
+
     /// Continuous sound for this frame. `elapsed` is seconds since the last call; `engineOn` is false
     /// on the title screen, where only the music plays.
-    func update(with bike: BikeState, input: RiderInput, tuning: Tuning, engineOn: Bool, elapsed: Double) {
+    func update(with bike: BikeState, rivals: [BikeState], input: RiderInput, tuning: Tuning, engineOn: Bool,
+                elapsed: Double) {
         // The race is being drawn, so the game is not paused.
         setSilenced(false)
         startIfNeeded()
@@ -221,6 +272,7 @@ final class SoundPlayer {
         engineSpeed.rate = rate
         enginePlayer.volume = engineLevel
         boostPlayer.volume = boostLevel
+        updateRivals(rivals, around: bike, tuning: tuning, on: engineOn && isOn, follow: follow)
 
         // Beep while the engine is about to cut out.
         if bike.heat >= SoundPlayer.warningHeat, running, !bike.finished {
