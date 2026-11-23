@@ -8,13 +8,23 @@ struct DuneBikesApp: App {
     @State private var editedTuning = Tuning()
     @State private var showsPanel = false
 
+    /// The tuning panel is a development tool: never in release builds, and in debug
+    /// builds only when launched with TUNING set in the environment.
+    private static var showsTuningButton: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["TUNING"] != nil
+        #else
+        false
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             SpriteView(scene: scene, preferredFramesPerSecond: 60)
                 .ignoresSafeArea()
                 .statusBarHidden()
                 .overlay(alignment: .topTrailing) {
-                    Button {
+                    if Self.showsTuningButton { Button {
                         editedTuning = scene.tuning
                         scene.isPaused = true
                         showsPanel = true
@@ -25,7 +35,7 @@ struct DuneBikesApp: App {
                             .background(.ultraThinMaterial, in: Circle())
                     }
                     .accessibilityLabel(Text(verbatim: "Tuning"))
-                    .padding(8)
+                    .padding(8) }
                 }
                 .sheet(isPresented: $showsPanel, onDismiss: {
                     scene.restart(with: editedTuning)

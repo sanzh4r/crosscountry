@@ -26,7 +26,7 @@ final class MenuNode: SKNode {
         var cupsWon: Int
         /// True once the cup has a result, so there is something for "new cup" to throw away.
         var cupUnderWay: Bool
-        var soundOn: Bool
+        var sound: String
     }
 
     /// One line of the solo track list.
@@ -454,7 +454,7 @@ final class MenuNode: SKNode {
         if let best = info.best { facts.append("BEST \(HUDNode.format(time: best))") }
         if info.cupsWon > 0 { facts.append("CUPS WON \(info.cupsWon)") }
         bestOnTitle.text = facts.joined(separator: "   ")
-        soundLabel.text = info.soundOn ? "SOUND ON" : "SOUND OFF"
+        soundLabel.text = info.sound
         newCupArmed = false
         newCupLabel.text = "NEW CUP"
         newCupLabel.isHidden = !info.cupUnderWay

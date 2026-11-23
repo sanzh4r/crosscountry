@@ -79,11 +79,43 @@ final class SoundPlayer {
         }
     }
 
+    /// Whether sound plays even with the phone's silent switch on. Kept between launches.
+    var ignoresSilentSwitch: Bool = UserDefaults.standard.bool(forKey: "soundIgnoresSilent") {
+        didSet {
+            UserDefaults.standard.set(ignoresSilentSwitch, forKey: "soundIgnoresSilent")
+            applyCategory()
+        }
+    }
+
+    /// The setting as shown on the title screen.
+    var settingName: String { !isOn ? "SOUND OFF" : ignoresSilentSwitch ? "SOUND ALWAYS" : "SOUND ON" }
+
+    /// Steps the setting: on (obeys the silent switch), always (ignores it), off.
+    func cycleSetting() {
+        if !isOn {
+            ignoresSilentSwitch = false
+            isOn = true
+        } else if !ignoresSilentSwitch {
+            ignoresSilentSwitch = true
+        } else {
+            isOn = false
+        }
+    }
+
+    /// Ambient obeys the silent switch, playback ignores it; both play alongside the
+    /// player's own music.
+    private func applyCategory() {
+        let session = AVAudioSession.sharedInstance()
+        if ignoresSilentSwitch {
+            try? session.setCategory(.playback, options: .mixWithOthers)
+        } else {
+            try? session.setCategory(.ambient)
+        }
+        try? session.setActive(true)
+    }
+
     init() {
-        // Plays even with the phone's silent switch on, and alongside the player's own music.
-        // Revisit once the game has its own sound on/off setting.
-        try? AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        applyCategory()
 
         engineLoop = SoundPlayer.buffer("engine")
         boostLoop = SoundPlayer.buffer("boost")

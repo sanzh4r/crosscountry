@@ -252,7 +252,7 @@ final class GameScene: SKScene {
         hud.isHidden = true
         menu.showTitle(MenuNode.TitleInfo(raceNumber: cup.current + 1, trackName: cup.round.name, best: bestTime,
                                           cupsWon: cupsWon, cupUnderWay: cup.current > 0 || !cup.places.isEmpty,
-                                          soundOn: sound.isOn))
+                                          sound: sound.settingName))
     }
 
     private static func savedLibrary() -> TrackLibrary {
@@ -492,7 +492,7 @@ final class GameScene: SKScene {
         case .start:
             beginCountdown()
         case .toggleSound:
-            sound.isOn.toggle()
+            sound.cycleSetting()
             enterTitle()
         case .newCup:
             cup = Cup()
